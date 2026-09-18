@@ -101,12 +101,12 @@ export const roomClient = {
     return data;
   },
 
-  async joinRoom(code: string, playerName: string): Promise<{ room: Room; player: RoomPlayer }> {
+  async joinRoom(code: string, playerName: string, existingPlayerId?: string): Promise<{ room: Room; player: RoomPlayer }> {
     const cleanCode = code.trim().toUpperCase();
     const res = await fetch(`/api/rooms/${cleanCode}/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: playerName }),
+      body: JSON.stringify({ name: playerName, playerId: existingPlayerId }),
     });
 
     const data = await res.json();

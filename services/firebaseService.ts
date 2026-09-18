@@ -172,13 +172,31 @@ export const firebaseService = {
   },
 
   /**
-   * Deletes a room document completely from Firestore
+   * Deletes a room document completely from Firestore, including all player sub-documents
    */
   async deleteRoom(roomCode: string): Promise<void> {
     try {
       const cleanCode = roomCode.trim().toUpperCase();
-      await deleteDoc(doc(db, 'rooms', cleanCode));
-      console.log(`[Firebase] Room ${cleanCode} deleted from Firestore.`);
+      
+      // Fetch the room to get the players list before deleting
+      const roomRef = doc(db, 'rooms', cleanCode);
+      const snap = await getDoc(roomRef);
+      if (snap.exists()) {
+        const roomData = snap.data();
+        const players = roomData.players || [];
+        
+        // Delete all players from the top-level 'players' collection
+        for (const player of players) {
+          if (player.id) {
+            await deleteDoc(doc(db, 'players', player.id)).catch(() => {});
+            // Also explicitly delete from the subcollection just in case
+            await deleteDoc(doc(db, 'rooms', cleanCode, 'players', player.id)).catch(() => {});
+          }
+        }
+      }
+
+      await deleteDoc(roomRef);
+      console.log(`[Firebase] Room ${cleanCode} and its players deleted from Firestore.`);
     } catch (error) {
       console.warn(`[Firebase] Warning: Failed to delete room ${roomCode} from Firestore:`, error);
     }

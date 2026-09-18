@@ -22,6 +22,7 @@ import {
   UserMinus, UserX, Trash2, Loader2
 } from 'lucide-react';
 import { playTTS } from '@/lib/tts';
+import { initAudioContext, playTerminalBlip } from '@/lib/audio';
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -358,10 +359,24 @@ function GamePlay() {
           if (stillInRoom) {
             confirmedInRoom = true;
           } else if (confirmedInRoom) {
-            roomClient.clearSession(roomCode);
-            alert('You have been removed from this Citadel session by the Commander.');
-            router.push('/');
-            return;
+            // Player was in the room, but now they're not.
+            // This happens if the Host clicks 'Remove' OR if the dev server restarted (memory cleared, Firebase fallback failed).
+            // Check if the room has a traces event indicating they were kicked
+            const wasKicked = updatedRoom.traces?.some(
+              (t) => t.id.startsWith('step-kick') && t.description.includes(currentSession.playerName)
+            );
+            const allKicked = updatedRoom.traces?.some((t) => t.id.startsWith('step-kick-all'));
+
+            if (wasKicked || allKicked) {
+              roomClient.clearSession(roomCode);
+              alert('You have been removed from this Citadel session by the Commander.');
+              router.push('/');
+              return;
+            } else {
+              // Not explicitly kicked. It's a server memory drop. Silently reconnect!
+              console.log('[Citadel] Server memory drop detected. Reconnecting...');
+              roomClient.joinRoom(roomCode, currentSession.playerName, currentSession.playerId).catch(console.error);
+            }
           }
         }
 
@@ -377,7 +392,7 @@ function GamePlay() {
       (err) => {
         failCount++;
         const currentSession = roomClient.getSession(roomCode);
-        if (failCount >= 2 && err.message && (err.message.includes('not found') || err.message.includes('ROOM_NOT_FOUND'))) {
+        if (failCount >= 2 && err.message && (err.message.toLowerCase().includes('not found') || err.message.includes('ROOM_NOT_FOUND') || err.message.toLowerCase().includes('does not exist'))) {
           if (currentSession && !currentSession.isHost) {
             roomClient.clearSession(roomCode);
             alert('This Citadel room has been closed by the Commander.');
@@ -402,6 +417,7 @@ function GamePlay() {
     const interval = setInterval(() => {
       if (i < text.length) {
         setDisplayedText(text.slice(0, i + 1));
+        if (i % 2 === 0) playTerminalBlip();
         i++;
       } else {
         clearInterval(interval);
@@ -567,6 +583,8 @@ function GamePlay() {
           <div className="flex gap-3 justify-center">
             <button
               onClick={() => {
+                initAudioContext();
+                if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
                 advanceTurn(1, GAME_SCRIPT[1].contextLoadAfter);
                 setGameStarted(true);
               }}
@@ -576,6 +594,8 @@ function GamePlay() {
             </button>
             <button
               onClick={() => {
+                initAudioContext();
+                if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
                 advanceTurn(1, GAME_SCRIPT[1].contextLoadAfter);
                 setGameStarted(true);
               }}

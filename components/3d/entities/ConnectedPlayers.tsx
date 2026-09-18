@@ -204,7 +204,8 @@ export function ConnectedPlayers({ players, currentPlayerId }: ConnectedPlayersP
     <group>
       {players.map((player) => {
         // Player 7 is rendered with full humanoid avatar via Player7.tsx
-        if (player.role === 'player_7') return null;
+        // Commander Vale is the host/overseer and should not have a physical presence in the courtyard
+        if (player.role === 'player_7' || player.role === 'commander_vale' || player.isHost) return null;
 
         let config: { pos: [number, number, number]; rot: [number, number, number] };
         if (player.role === 'observer') {

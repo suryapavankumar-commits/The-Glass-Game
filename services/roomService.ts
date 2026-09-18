@@ -203,7 +203,7 @@ export const roomService = {
     return { room, player };
   },
 
-  joinRoom(code: string, playerName: string): { room: Room; player: RoomPlayer } {
+  joinRoom(code: string, playerName: string, existingPlayerId?: string): { room: Room; player: RoomPlayer } {
     const normalizedCode = code.trim().toUpperCase();
     const room = roomStore.get(normalizedCode);
 
@@ -225,9 +225,12 @@ export const roomService = {
       throw err;
     }
 
-    const playerId = `player-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const playerId = existingPlayerId || `player-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const roleIndex = Math.min(room.players.length, ROLE_SEQUENCE.length - 1);
     const roleInfo = ROLE_SEQUENCE[roleIndex];
+
+    // Remove any stale instance of this player if it somehow exists
+    room.players = room.players.filter(p => p.id !== playerId);
 
     const player: RoomPlayer = {
       id: playerId,
