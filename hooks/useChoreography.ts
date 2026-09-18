@@ -16,6 +16,9 @@ export function useChoreography(turnData: Turn | undefined, gameState: GameState
     const fetchChoreography = async () => {
       setIsLoading(true);
       
+      const narrative = gameState.latestDecision?.narrative || turnData.narrative;
+      const gameMasterMessage = gameState.latestDecision?.globalOrders || turnData.gameMasterMessage;
+
       try {
         const response = await fetch('/api/choreography', {
           method: 'POST',
@@ -23,8 +26,8 @@ export function useChoreography(turnData: Turn | undefined, gameState: GameState
           body: JSON.stringify({
             turnId: turnData.id,
             choiceId: turnData.selectedChoiceId,
-            narrative: turnData.narrative,
-            gameMasterMessage: turnData.gameMasterMessage,
+            narrative: narrative,
+            gameMasterMessage: gameMasterMessage,
             worldState: gameState.worldState
           })
         });

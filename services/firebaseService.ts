@@ -3,9 +3,9 @@
 // Persists rooms, participants, and join events to Firestore
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { doc, setDoc, getDoc, deleteDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, arrayUnion, serverTimestamp, collection, query, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { Room, RoomPlayer } from '@/types';
+import { Room, RoomPlayer, CanonicalFact, NarrativeClaim, PlayerObjective } from '@/types';
 
 export const firebaseService = {
   /**
@@ -242,6 +242,73 @@ export const firebaseService = {
     } catch (error) {
       console.warn(`[Firebase] Failed to fetch room ${roomCode} from Firestore:`, error);
       return null;
+    }
+  },
+
+  /**
+   * Persists a canonical fact to the canonicalFacts subcollection
+   */
+  async recordCanonicalFact(roomCode: string, fact: CanonicalFact): Promise<void> {
+    try {
+      const cleanCode = roomCode.trim().toUpperCase();
+      const factRef = doc(db, 'rooms', cleanCode, 'canonicalFacts', fact.id);
+      await setDoc(factRef, {
+        ...fact,
+        createdAt: serverTimestamp(),
+      });
+      console.log(`[Firebase] Canonical fact ${fact.id} recorded for room ${cleanCode}.`);
+    } catch (error) {
+      console.warn(`[Firebase] Warning: Failed to record canonical fact:`, error);
+    }
+  },
+
+  /**
+   * Retrieves all canonical facts for a room
+   */
+  async getCanonicalFacts(roomCode: string): Promise<CanonicalFact[]> {
+    try {
+      const cleanCode = roomCode.trim().toUpperCase();
+      const factsRef = collection(db, 'rooms', cleanCode, 'canonicalFacts');
+      const q = query(factsRef, orderBy('establishedInTurn', 'asc'));
+      const snap = await getDocs(q);
+      return snap.docs.map(doc => doc.data() as CanonicalFact);
+    } catch (error) {
+      console.warn(`[Firebase] Warning: Failed to fetch canonical facts:`, error);
+      return [];
+    }
+  },
+
+  /**
+   * Persists a narrative claim to the narrativeHistory subcollection
+   */
+  async recordNarrativeClaim(roomCode: string, claim: NarrativeClaim): Promise<void> {
+    try {
+      const cleanCode = roomCode.trim().toUpperCase();
+      const claimRef = doc(db, 'rooms', cleanCode, 'narrativeHistory', claim.id);
+      await setDoc(claimRef, {
+        ...claim,
+        createdAt: serverTimestamp(),
+      });
+      console.log(`[Firebase] Narrative claim ${claim.id} recorded for room ${cleanCode}.`);
+    } catch (error) {
+      console.warn(`[Firebase] Warning: Failed to record narrative claim:`, error);
+    }
+  },
+
+  /**
+   * Persists a private objective to a specific player's subcollection
+   */
+  async updatePlayerPrivateObjective(roomCode: string, playerId: string, objective: PlayerObjective): Promise<void> {
+    try {
+      const cleanCode = roomCode.trim().toUpperCase();
+      const playerRef = doc(db, 'rooms', cleanCode, 'players', playerId);
+      await setDoc(playerRef, {
+        privateObjective: objective,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      console.log(`[Firebase] Private objective updated for player ${playerId} in room ${cleanCode}.`);
+    } catch (error) {
+      console.warn(`[Firebase] Warning: Failed to update private objective:`, error);
     }
   },
 };

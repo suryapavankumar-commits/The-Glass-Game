@@ -166,6 +166,23 @@ export const roomClient = {
     return data.room;
   },
 
+  async advanceGame(code: string, requesterId: string): Promise<Room> {
+    const cleanCode = code.trim().toUpperCase();
+    const res = await fetch(`/api/rooms/${cleanCode}/advance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requesterId }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to advance game');
+    }
+
+    this.saveCachedRoom(data.room);
+    return data.room;
+  },
+
   async submitAction(code: string, playerId: string, action: PlayerActionPayload): Promise<Room> {
     const cleanCode = code.trim().toUpperCase();
     const res = await fetch(`/api/rooms/${cleanCode}/action`, {

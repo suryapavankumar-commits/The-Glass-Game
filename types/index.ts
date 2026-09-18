@@ -7,11 +7,24 @@
 
 export type GameMode = 'player' | 'glass-box' | 'transitioning-to-glass' | 'transitioning-to-player';
 
+export type GamePhase =
+  | 'lobby'
+  | 'generating_situation'
+  | 'verifying_context'
+  | 'commander_decision'
+  | 'assigning_objectives'
+  | 'player_action'
+  | 'resolving_events'
+  | 'context_surgery'
+  | 'round_complete'
+  | 'game_over';
+
 export interface GameState {
   runId: string;
   currentTurn: number;
   totalTurns: number;
   mode: GameMode;
+  phase: GamePhase;
   worldState: WorldState;
   memory: MemoryState;
   contextLoad: number; // 0–100 percent
@@ -21,6 +34,7 @@ export interface GameState {
   replayCompleted: boolean;
   startedAt: string;
   completedAt?: string;
+  latestDecision?: CommanderDecision;
 }
 
 export interface WorldState {
@@ -247,6 +261,12 @@ export interface Run {
 
 export type PlayerRole = 'commander_vale' | 'player_7' | 'gatekeeper' | 'surgeon' | 'observer';
 
+export interface PlayerObjective {
+  id: string;
+  description: string;
+  status: 'active' | 'completed' | 'failed';
+}
+
 export interface RoomPlayer {
   id: string;
   name: string;
@@ -255,6 +275,7 @@ export interface RoomPlayer {
   isHost: boolean;
   connected: boolean;
   joinedAt: string;
+  privateObjective?: PlayerObjective;
 }
 
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
@@ -276,5 +297,31 @@ export interface PlayerActionPayload {
   choiceId?: string;
   note?: string;
   timestamp: string;
+}
+
+// ── AI Services & Canonical Data ─────────────────────────────────────────────
+
+export interface CanonicalFact {
+  id: string;
+  fact: string;
+  establishedInTurn: number;
+}
+
+export interface NarrativeClaim {
+  id: string;
+  claim: string;
+  turn: number;
+}
+
+export interface ContextSurgery {
+  isValid: boolean;
+  contradictionDetails?: string;
+  repairedContext?: string;
+}
+
+export interface CommanderDecision {
+  narrative: string;
+  globalOrders: string;
+  playerOrders: Record<string, string>; // Maps player ID to their specific orders
 }
 

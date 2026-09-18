@@ -12,6 +12,8 @@ import { useGame } from '@/store/gameStore';
 import { GAME_SCRIPT } from '@/data/gameScript';
 import { GameScene3D } from '@/components/3d/GameScene3D';
 import { MultiplayerGlassBoxView } from '@/components/glass-box/MultiplayerGlassBoxView';
+import { ContextSurgeryVisualizer } from '@/components/multiplayer/ContextSurgeryVisualizer';
+import { PlayerDashboard } from '@/components/multiplayer/PlayerDashboard';
 import { roomClient, PlayerSession } from '@/services/roomClient';
 import type { TurnChoice, Invariant, Room, RoomPlayer } from '@/types';
 import {
@@ -19,6 +21,7 @@ import {
   AlertTriangle, RotateCcw, Play, CheckCircle,
   UserMinus, UserX, Trash2, Loader2
 } from 'lucide-react';
+import { playTTS } from '@/lib/tts';
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -274,6 +277,8 @@ function GamePlay() {
   const failureDetected = room ? room.gameState.failureDetected : soloState.failureDetected;
 
   const currentTurnData = GAME_SCRIPT[currentTurnNumber] || GAME_SCRIPT[0];
+  const actualNarrative = room?.gameState.latestDecision?.narrative || currentTurnData.narrative;
+  const actualMessage = room?.gameState.latestDecision?.globalOrders || currentTurnData.gameMasterMessage;
 
   const [adminLoading, setAdminLoading] = useState<string | null>(null);
 
@@ -407,10 +412,11 @@ function GamePlay() {
   }, [isDemoMode]);
 
   useEffect(() => {
-    if (gameStarted && currentTurnData) {
-      typeText(currentTurnData.gameMasterMessage);
+    if (gameStarted && actualMessage) {
+      typeText(actualMessage);
+      playTTS(actualMessage, 'Game Master');
     }
-  }, [currentTurnNumber, gameStarted]); // eslint-disable-line
+  }, [currentTurnNumber, gameStarted, actualMessage]); // eslint-disable-line
 
   // Choice handler for multiplayer (server authoritative) or solo
   const handleChoice = useCallback(
@@ -598,6 +604,8 @@ function GamePlay() {
         {showViolationFlash && <ConstraintViolationFlash />}
       </AnimatePresence>
 
+      {room && <ContextSurgeryVisualizer phase={room.gameState.phase} />}
+
       {/* ── TOP HEADER STRIP: TELEMETRY & DUAL-VIEW TOGGLE ── */}
       <div
         className={`pt-14 border-b transition-colors ${
@@ -706,7 +714,13 @@ function GamePlay() {
         </div>
       ) : (
         /* ── VIEW MODE 2: PLAYER VIEW ── */
-        <div className="flex-1 max-w-7xl mx-auto w-full px-6 py-6 grid lg:grid-cols-3 gap-6">
+        <div className="flex-1 max-w-7xl mx-auto w-full px-6 py-6 grid lg:grid-cols-3 gap-6 relative">
+          
+          {/* Private Player Dashboard (Overlay) */}
+          {room && currentPlayer && (
+            <PlayerDashboard player={currentPlayer} gameState={room.gameState} />
+          )}
+
           {/* Left: 3D Scene + Narrative */}
           <div className="lg:col-span-2 flex flex-col gap-4">
             <AnimatePresence mode="wait">
@@ -736,7 +750,7 @@ function GamePlay() {
                   className="p-6 rounded-xl bg-[#faf9f5] border border-[#e6dfd8] min-h-32 mb-4"
                 >
                   <p className="narrative-text text-[#3d3d3a] leading-relaxed whitespace-pre-line">
-                    {currentTurnData.narrative}
+                    {actualNarrative}
                   </p>
                 </div>
 
@@ -750,7 +764,7 @@ function GamePlay() {
                     className="text-[#e8e0d2] text-sm leading-relaxed font-serif italic"
                     style={{ fontSize: '15px' }}
                   >
-                    {isTyping ? displayedText : currentTurnData.gameMasterMessage}
+                    {isTyping ? displayedText : actualMessage}
                     {isTyping && (
                       <span className="inline-block w-0.5 h-4 bg-[#cc785c] ml-0.5 animate-pulse" />
                     )}
@@ -833,19 +847,51 @@ function GamePlay() {
 
               {/* Connected Multiplayer Participants Roster */}
               {isMultiplayer && room && (
-                <div className="p-5 rounded-xl bg-[#faf9f5] border border-[#e6dfd8] space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-caption-upper text-[#6c6a64]">
-                      Citadel Operatives
-                    </span>
-                    <span className="text-[10px] font-mono text-[#cc785c]">
-                      {room.players.length} / 10
-                    </span>
-                  </div>
+                <div className="space-y-4">
+                  
+                  {/* Game Overseer (Commander Vale / Host) */}
+                  {room.players.find(p => p.isHost) && (
+                    <div className="p-4 rounded-xl bg-[#141413] border border-[#252320]">
+                      <div className="text-[10px] font-mono text-[#cc785c] uppercase tracking-wider mb-2">
+                        Game Overseer
+                      </div>
+                      {(() => {
+                        const host = room.players.find(p => p.isHost)!;
+                        return (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="w-2 h-2 rounded-full shadow-[0_0_8px_rgba(204,120,92,0.6)]"
+                                style={{ backgroundColor: host.connected ? '#cc785c' : '#8e8b82' }}
+                              />
+                              <span className="font-medium text-[#faf9f5]">
+                                {host.name}
+                                {host.id === session?.playerId && ' (You)'}
+                              </span>
+                            </div>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#252320] text-[#cc785c] border border-[#cc785c]/30">
+                              COMMANDER VALE
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  {/* Citadel Operatives */}
+                  <div className="p-5 rounded-xl bg-[#faf9f5] border border-[#e6dfd8] space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-caption-upper text-[#6c6a64]">
+                        Citadel Operatives
+                      </span>
+                      <span className="text-[10px] font-mono text-[#cc785c]">
+                        {room.players.filter(p => !p.isHost).length} / 9
+                      </span>
+                    </div>
 
                   <div className="space-y-2">
-                    {room.players.map((p) => {
-                      const canKick = isHost && !p.isHost && p.id !== session?.playerId;
+                    {room.players.filter(p => !p.isHost).map((p) => {
+                      const canKick = isHost && p.id !== session?.playerId;
                       return (
                         <div
                           key={p.id}
@@ -865,11 +911,6 @@ function GamePlay() {
                                 {p.name}
                                 {p.id === session?.playerId && ' (You)'}
                               </span>
-                              {p.isHost && (
-                                <span className="ml-1 text-[9px] font-mono px-1 rounded bg-[#181715] text-[#faf9f5]">
-                                  HOST
-                                </span>
-                              )}
                             </div>
                           </div>
 
@@ -930,7 +971,8 @@ function GamePlay() {
                     </div>
                   )}
                 </div>
-              )}
+              </div>
+            )}
             </div>
           </div>
         </div>
