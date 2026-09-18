@@ -791,7 +791,7 @@ function GamePlay() {
           )}
 
           {/* Left: 3D Scene + Narrative */}
-          <div className={isFullscreen ? "flex-1 relative" : "lg:col-span-2 flex flex-col gap-4"}>
+          <div className={isFullscreen ? "flex-1 flex flex-row-reverse relative overflow-hidden" : "lg:col-span-2 flex flex-col gap-4"}>
             <AnimatePresence mode="wait">
               <motion.div
                 key={currentTurnNumber}
@@ -799,7 +799,7 @@ function GamePlay() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.4 }}
-                className={isFullscreen ? "absolute inset-0 z-0" : ""}
+                className={isFullscreen ? "flex-1 relative z-0" : ""}
               >
                 {/* Scene label */}
                 {!isFullscreen && (
@@ -822,7 +822,7 @@ function GamePlay() {
 
             {/* In fullscreen, we render the narrative and choices in a side panel next to the 3D scene */}
             {isFullscreen ? (
-              <div className="w-96 bg-[#faf9f5] border-l border-[#e6dfd8] shadow-2xl flex flex-col z-10 flex-shrink-0 overflow-hidden">
+              <div className="w-96 bg-[#faf9f5] border-r border-[#e6dfd8] shadow-2xl flex flex-col z-10 flex-shrink-0 overflow-hidden">
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
                   {/* Scene label */}
                   <div className="text-caption-upper text-[#cc785c]">
