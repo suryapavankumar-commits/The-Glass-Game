@@ -820,9 +820,9 @@ function GamePlay() {
               </motion.div>
             </AnimatePresence>
 
-            {/* In fullscreen, we render the narrative and choices in a side panel OVER the 3D scene */}
+            {/* In fullscreen, we render the narrative and choices in a side panel next to the 3D scene */}
             {isFullscreen ? (
-              <div className="absolute top-0 right-0 bottom-0 w-96 bg-[#faf9f5]/95 backdrop-blur-xl border-l border-[#e6dfd8] shadow-2xl flex flex-col z-10 overflow-hidden">
+              <div className="w-96 bg-[#faf9f5] border-l border-[#e6dfd8] shadow-2xl flex flex-col z-10 flex-shrink-0 overflow-hidden">
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
                   {/* Scene label */}
                   <div className="text-caption-upper text-[#cc785c]">
