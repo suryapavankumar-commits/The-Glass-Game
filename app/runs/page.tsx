@@ -87,6 +87,7 @@ export default function RunsPage() {
   const [filter, setFilter] = useState<Filter>('all');
 
   useEffect(() => {
+    // eslint-disable-next-line
     setRuns(runService.getRuns());
   }, []);
 

@@ -242,3 +242,39 @@ export interface Run {
   trace: TraceStep[];
   gameState: GameState;
 }
+
+// ── Multiplayer Rooms ─────────────────────────────────────────────────────────
+
+export type PlayerRole = 'commander_vale' | 'player_7' | 'gatekeeper' | 'surgeon' | 'observer';
+
+export interface RoomPlayer {
+  id: string;
+  name: string;
+  role: PlayerRole;
+  roleLabel: string;
+  isHost: boolean;
+  connected: boolean;
+  joinedAt: string;
+}
+
+export type RoomStatus = 'lobby' | 'playing' | 'finished';
+
+export interface Room {
+  id: string;
+  code: string; // 6-character uppercase code (e.g. 'ABC7K2')
+  hostId: string;
+  status: RoomStatus;
+  players: RoomPlayer[];
+  maxPlayers: 10;
+  createdAt: string;
+  gameState: GameState;
+  traces: TraceStep[];
+}
+
+export interface PlayerActionPayload {
+  actionType: 'select_choice' | 'advance_turn' | 'apply_surgery';
+  choiceId?: string;
+  note?: string;
+  timestamp: string;
+}
+

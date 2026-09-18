@@ -2,7 +2,7 @@
 // TRACE SERVICE — Mock trace data for Glass Box observability
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { TraceStep, SurgeonDiagnosis, DiagnosisStep } from '@/types';
+import type { TraceStep, SurgeonDiagnosis } from '@/types';
 
 // Build the canonical trace for Turn 18 failure scenario
 export function buildFailureTrace(currentTurn: number): TraceStep[] {

@@ -5,9 +5,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { createContext, useContext, useReducer, useCallback } from 'react';
-import type {
-  GameState, GameMode, WorldState, MemoryState, Invariant, MemoryItem,
-  TraceStep, Run, RunMetrics, ContextFrame
+import type { 
+  GameState, GameMode, WorldState, MemoryState, Invariant,
+  TraceStep, ContextFrame
 } from '@/types';
 import { INITIAL_WORLD_STATE } from '@/data/gameScript';
 

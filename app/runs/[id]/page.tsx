@@ -37,6 +37,7 @@ export default function RunDetailPage({ params }: { params: Promise<{ id: string
   useEffect(() => {
     const found = runService.getRun(id);
     if (found) {
+      // eslint-disable-next-line
       setRun(found);
     } else {
       // Generate a mock run for display

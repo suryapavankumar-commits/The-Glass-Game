@@ -7,8 +7,9 @@
 import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { motion, useInView } from 'framer-motion';
-import { ArrowRight, Eye, GitBranch, Activity, Shield, AlertTriangle, RotateCcw, ChevronRight } from 'lucide-react';
+import { ArrowRight, Eye, GitBranch, Activity, Shield, AlertTriangle, RotateCcw, ChevronRight, Users, PlusCircle, LogIn } from 'lucide-react';
 import { Nav } from '@/components/navigation/Nav';
+import { RoomModals } from '@/components/multiplayer/RoomModals';
 
 // ── Animation variants ────────────────────────────────────────────────────────
 
@@ -253,6 +254,9 @@ function HealingLoop() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function LandingPage() {
+  const [createOpen, setCreateOpen] = useState(false);
+  const [joinOpen, setJoinOpen] = useState(false);
+
   return (
     <div className="min-h-screen bg-[#faf9f5]">
       <Nav variant="light" />
@@ -299,7 +303,7 @@ export default function LandingPage() {
                 transition={{ duration: 0.6, delay: 0.45 }}
                 className="text-base text-[#6c6a64] leading-relaxed mb-10 max-w-lg"
               >
-                An interactive world powered by an AI Game Master — with a second intelligence watching the trace, detecting context drift, and repairing failures before the story breaks.
+                An interactive world powered by an AI Game Master — with up to 10 players inhabiting the same Citadel simulation, while a second intelligence watches the trace, detects context drift, and repairs failures.
               </motion.p>
 
               <motion.div
@@ -310,19 +314,33 @@ export default function LandingPage() {
               >
                 <Link
                   href="/play"
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-[#141413] text-[#faf9f5] rounded-lg text-sm font-medium hover:bg-[#252523] transition-colors"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-[#141413] text-[#faf9f5] rounded-lg text-sm font-medium hover:bg-[#252523] transition-colors shadow-sm"
                   aria-label="Enter the game"
                 >
-                  Enter the Game
+                  Enter Solo Game
                   <ArrowRight size={15} />
                 </Link>
+                <button
+                  onClick={() => setCreateOpen(true)}
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-[#cc785c] text-white rounded-lg text-sm font-medium hover:bg-[#b5654c] transition-colors shadow-sm cursor-pointer"
+                >
+                  <PlusCircle size={15} />
+                  Create Room
+                </button>
+                <button
+                  onClick={() => setJoinOpen(true)}
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-[#faf9f5] text-[#141413] rounded-lg text-sm font-medium border border-[#e6dfd8] hover:bg-[#efe9de] transition-colors cursor-pointer"
+                >
+                  <LogIn size={15} />
+                  Join Room
+                </button>
                 <Link
                   href="/glass-box"
                   className="inline-flex items-center gap-2 px-6 py-3 bg-[#faf9f5] text-[#141413] rounded-lg text-sm font-medium border border-[#e6dfd8] hover:bg-[#efe9de] transition-colors"
                   aria-label="Open the Glass Box observability console"
                 >
                   <Eye size={15} />
-                  Open the Glass Box
+                  Glass Box
                 </Link>
               </motion.div>
             </div>
@@ -521,15 +539,23 @@ export default function LandingPage() {
                 href="/play"
                 className="inline-flex items-center gap-2 px-8 py-4 bg-[#141413] text-[#faf9f5] rounded-lg text-sm font-medium hover:bg-[#252523] transition-colors"
               >
-                Enter the Glass Game
+                Enter Solo Game
                 <ArrowRight size={16} />
               </Link>
-              <Link
-                href="/play?demo=true"
-                className="inline-flex items-center gap-2 px-8 py-4 bg-[#cc785c] text-white rounded-lg text-sm font-medium hover:bg-[#a9583e] transition-colors"
+              <button
+                onClick={() => setCreateOpen(true)}
+                className="inline-flex items-center gap-2 px-8 py-4 bg-[#cc785c] text-white rounded-lg text-sm font-medium hover:bg-[#b5654c] transition-colors cursor-pointer"
               >
-                Watch the Demo
-              </Link>
+                <PlusCircle size={16} />
+                Create Room
+              </button>
+              <button
+                onClick={() => setJoinOpen(true)}
+                className="inline-flex items-center gap-2 px-8 py-4 bg-[#faf9f5] text-[#141413] rounded-lg text-sm font-medium border border-[#e6dfd8] hover:bg-[#efe9de] transition-colors cursor-pointer"
+              >
+                <LogIn size={16} />
+                Join Room
+              </button>
             </div>
           </FadeInSection>
         </div>
@@ -554,6 +580,16 @@ export default function LandingPage() {
           </div>
         </div>
       </footer>
+
+      {/* ── MULTIPLAYER ROOM MODALS ── */}
+      <RoomModals
+        createOpen={createOpen}
+        joinOpen={joinOpen}
+        onClose={() => {
+          setCreateOpen(false);
+          setJoinOpen(false);
+        }}
+      />
     </div>
   );
 }
