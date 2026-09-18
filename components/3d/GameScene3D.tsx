@@ -22,13 +22,16 @@ useGLTF.preload('/models/readyplayer.me.glb');
 export function GameScene3D({
   players = [],
   currentPlayerId,
+  isFullscreen,
+  toggleFullscreen
 }: {
   players?: RoomPlayer[];
   currentPlayerId?: string;
+  isFullscreen?: boolean;
+  toggleFullscreen?: () => void;
 }) {
   const { state } = useGame();
   const containerRef = useRef<HTMLDivElement>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   
   const p7Invariant = state.memory.invariants.find(i => i.id === 'inv-protect-p7');
   const invariantStatus = p7Invariant?.status || 'none';
@@ -40,53 +43,10 @@ export function GameScene3D({
   const p7Visible = true;
   const isFailed = state.failureDetected;
 
-  const toggleFullscreen = async () => {
-    if (!isFullscreen) {
-      setIsFullscreen(true);
-      try {
-        if (containerRef.current && containerRef.current.requestFullscreen) {
-          await containerRef.current.requestFullscreen();
-        }
-      } catch {
-        // Fallback
-      }
-    } else {
-      setIsFullscreen(false);
-      try {
-        if (document.fullscreenElement && document.exitFullscreen) {
-          await document.exitFullscreen();
-        }
-      } catch {
-        // Fallback
-      }
-    }
-  };
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement));
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isFullscreen) {
-        setIsFullscreen(false);
-      }
-    };
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isFullscreen]);
-
   return (
     <div 
       ref={containerRef}
-      className={`w-full overflow-hidden bg-[#1a232e] relative select-none transition-all duration-300 ${
-        isFullscreen 
-          ? 'fixed inset-0 z-50 w-screen h-screen rounded-none border-none shadow-none' 
-          : 'h-[640px] md:h-[740px] rounded-xl border border-[#e6dfd8] shadow-2xl'
-      }`}
+      className={`w-full h-full overflow-hidden bg-[#1a232e] relative select-none rounded-xl border border-[#e6dfd8] shadow-2xl`}
     >
       {/* 3D Canvas */}
       <Canvas shadows camera={{ position: [0, 6.0, 18], fov: 54 }}>

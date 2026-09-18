@@ -267,6 +267,8 @@ function GamePlay() {
   const [displayedText, setDisplayedText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const narrativeRef = useRef<HTMLDivElement>(null);
+  const gameContainerRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Effective authoritative state: multiplayer room state if present, else solo state
   const isMultiplayer = Boolean(roomCode);
@@ -408,6 +410,41 @@ function GamePlay() {
     return () => unsubscribe();
   }, [roomCode, failureDetected, router]);
 
+  const toggleFullscreen = async () => {
+    if (!isFullscreen) {
+      setIsFullscreen(true);
+      try {
+        if (gameContainerRef.current && gameContainerRef.current.requestFullscreen) {
+          await gameContainerRef.current.requestFullscreen();
+        }
+      } catch {}
+    } else {
+      setIsFullscreen(false);
+      try {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          await document.exitFullscreen();
+        }
+      } catch {}
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen]);
+
   // Typewriter effect for narrative
   const typeText = useCallback((text: string) => {
     setIsTyping(true);
@@ -430,9 +467,14 @@ function GamePlay() {
   useEffect(() => {
     if (gameStarted && actualMessage) {
       typeText(actualMessage);
-      playTTS(actualMessage, 'Game Master');
+      // Play narrative first, then game master speech
+      if (actualNarrative) {
+        playTTS(actualNarrative + ". " + actualMessage, 'narrator');
+      } else {
+        playTTS(actualMessage, 'Game Master');
+      }
     }
-  }, [currentTurnNumber, gameStarted, actualMessage]); // eslint-disable-line
+  }, [currentTurnNumber, gameStarted, actualMessage, actualNarrative]); // eslint-disable-line
 
   // Choice handler for multiplayer (server authoritative) or solo
   const handleChoice = useCallback(
@@ -734,15 +776,22 @@ function GamePlay() {
         </div>
       ) : (
         /* ── VIEW MODE 2: PLAYER VIEW ── */
-        <div className="flex-1 max-w-7xl mx-auto w-full px-6 py-6 grid lg:grid-cols-3 gap-6 relative">
+        <div 
+          ref={gameContainerRef}
+          className={
+            isFullscreen
+              ? "fixed inset-0 z-50 bg-[#1a232e] w-screen h-screen flex flex-row overflow-hidden font-sans"
+              : "flex-1 max-w-7xl mx-auto w-full px-6 py-6 grid lg:grid-cols-3 gap-6 relative"
+          }
+        >
           
           {/* Private Player Dashboard (Overlay) */}
-          {room && currentPlayer && (
+          {room && currentPlayer && !isFullscreen && (
             <PlayerDashboard player={currentPlayer} gameState={room.gameState} />
           )}
 
           {/* Left: 3D Scene + Narrative */}
-          <div className="lg:col-span-2 flex flex-col gap-4">
+          <div className={isFullscreen ? "flex-1 relative" : "lg:col-span-2 flex flex-col gap-4"}>
             <AnimatePresence mode="wait">
               <motion.div
                 key={currentTurnNumber}
@@ -750,57 +799,145 @@ function GamePlay() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.4 }}
+                className={isFullscreen ? "absolute inset-0 z-0" : ""}
               >
                 {/* Scene label */}
-                <div className="text-caption-upper text-[#cc785c] mb-4">
-                  {currentTurnData.scene}
-                </div>
+                {!isFullscreen && (
+                  <div className="text-caption-upper text-[#cc785c] mb-4">
+                    {currentTurnData.scene}
+                  </div>
+                )}
 
                 {/* Shared 3D Citadel World with Humanoid Player 7 and other connected players */}
-                <div className="mb-4">
+                <div className={isFullscreen ? "absolute inset-0" : "mb-4"}>
                   <GameScene3D
                     players={room?.players || []}
                     currentPlayerId={session?.playerId}
+                    isFullscreen={isFullscreen}
+                    toggleFullscreen={toggleFullscreen}
                   />
-                </div>
-
-                {/* Narrative */}
-                <div
-                  ref={narrativeRef}
-                  className="p-6 rounded-xl bg-[#faf9f5] border border-[#e6dfd8] min-h-32 mb-4"
-                >
-                  <p className="narrative-text text-[#3d3d3a] leading-relaxed whitespace-pre-line">
-                    {actualNarrative}
-                  </p>
-                </div>
-
-                {/* Game Master speech */}
-                <div className="p-6 rounded-xl bg-[#141413] border border-[#252320]">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#cc785c] animate-pulse-dot" />
-                    <span className="text-caption-upper text-[#cc785c]">Game Master</span>
-                  </div>
-                  <p
-                    className="text-[#e8e0d2] text-sm leading-relaxed font-serif italic"
-                    style={{ fontSize: '15px' }}
-                  >
-                    {isTyping ? displayedText : actualMessage}
-                    {isTyping && (
-                      <span className="inline-block w-0.5 h-4 bg-[#cc785c] ml-0.5 animate-pulse" />
-                    )}
-                  </p>
                 </div>
               </motion.div>
             </AnimatePresence>
 
-            {/* Choices */}
-            {!isTyping && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-                className="space-y-2"
-              >
+            {/* In fullscreen, we render the narrative and choices in a side panel OVER the 3D scene */}
+            {isFullscreen ? (
+              <div className="absolute top-0 right-0 bottom-0 w-96 bg-[#faf9f5]/95 backdrop-blur-xl border-l border-[#e6dfd8] shadow-2xl flex flex-col z-10 overflow-hidden">
+                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                  {/* Scene label */}
+                  <div className="text-caption-upper text-[#cc785c]">
+                    {currentTurnData.scene}
+                  </div>
+                  
+                  {/* Narrative */}
+                  <div ref={narrativeRef} className="rounded-xl min-h-32">
+                    <p className="narrative-text text-[#3d3d3a] leading-relaxed whitespace-pre-line">
+                      {actualNarrative}
+                    </p>
+                  </div>
+
+                  {/* Game Master speech */}
+                  <div className="p-5 rounded-xl bg-[#141413] border border-[#252320]">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#cc785c] animate-pulse-dot" />
+                      <span className="text-caption-upper text-[#cc785c]">Game Master</span>
+                    </div>
+                    <p className="text-[#e8e0d2] text-sm leading-relaxed font-serif italic" style={{ fontSize: '15px' }}>
+                      {isTyping ? displayedText : actualMessage}
+                      {isTyping && <span className="inline-block w-0.5 h-4 bg-[#cc785c] ml-0.5 animate-pulse" />}
+                    </p>
+                  </div>
+
+                  {/* Choices */}
+                  {!isTyping && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.1 }}
+                      className="space-y-2 pt-2"
+                    >
+                      <div className="text-caption-upper text-[#6c6a64] mb-3">What do you do?</div>
+                      {currentTurnData.choices.map((choice, i) => (
+                        <motion.button
+                          key={choice.id}
+                          initial={{ opacity: 0, x: -8 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: i * 0.06 }}
+                          onClick={() => handleChoice(choice.id)}
+                          disabled={isProcessing}
+                          className={[
+                            'w-full text-left p-3 rounded-xl border transition-all duration-200 cursor-pointer',
+                            'group flex items-start gap-3',
+                            selectedChoice === choice.id
+                              ? 'border-[#cc785c] bg-[#cc785c]/5'
+                              : 'border-[#e6dfd8] bg-transparent hover:border-[#cc785c]/40 hover:bg-[#f5f0e8]/50',
+                            isProcessing && selectedChoice !== choice.id ? 'opacity-40' : '',
+                            choice.isInvariantCreating ? 'ring-1 ring-[#5db872]/30' : '',
+                          ].join(' ')}
+                        >
+                          <span className="w-5 h-5 rounded-md bg-[#e8e0d2] flex items-center justify-center flex-shrink-0 mt-0.5 text-[10px] font-mono text-[#6c6a64] group-hover:bg-[#cc785c]/20 transition-colors">
+                            {String.fromCharCode(65 + i)}
+                          </span>
+                          <div className="flex-1">
+                            <p className={`text-sm font-medium ${choice.isInvariantCreating ? 'text-[#5db872]' : 'text-[#141413]'}`}>
+                              {choice.label}
+                            </p>
+                            {choice.description && (
+                              <p className="text-xs text-[#8e8b82] mt-0.5">{choice.description}</p>
+                            )}
+                          </div>
+                          {selectedChoice === choice.id && isProcessing && (
+                            <svg className="animate-spin w-4 h-4 text-[#cc785c] flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                            </svg>
+                          )}
+                        </motion.button>
+                      ))}
+                    </motion.div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Standard layout narrative and choices */}
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={`narrative-${currentTurnNumber}`}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.4 }}
+                  >
+                    {/* Narrative */}
+                    <div ref={narrativeRef} className="p-6 rounded-xl bg-[#faf9f5] border border-[#e6dfd8] min-h-32 mb-4">
+                      <p className="narrative-text text-[#3d3d3a] leading-relaxed whitespace-pre-line">
+                        {actualNarrative}
+                      </p>
+                    </div>
+
+                    {/* Game Master speech */}
+                    <div className="p-6 rounded-xl bg-[#141413] border border-[#252320]">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#cc785c] animate-pulse-dot" />
+                        <span className="text-caption-upper text-[#cc785c]">Game Master</span>
+                      </div>
+                      <p className="text-[#e8e0d2] text-sm leading-relaxed font-serif italic" style={{ fontSize: '15px' }}>
+                        {isTyping ? displayedText : actualMessage}
+                        {isTyping && <span className="inline-block w-0.5 h-4 bg-[#cc785c] ml-0.5 animate-pulse" />}
+                      </p>
+                    </div>
+                  </motion.div>
+                </AnimatePresence>
+
+                {/* Choices */}
+                {!isTyping && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1 }}
+                    className="space-y-2"
+                  >
                 <div className="text-caption-upper text-[#6c6a64] mb-3">What do you do?</div>
                 {currentTurnData.choices.map((choice, i) => (
                   <motion.button
@@ -855,11 +992,13 @@ function GamePlay() {
                   </motion.button>
                 ))}
               </motion.div>
+                )}
+              </>
             )}
           </div>
 
           {/* Right: World State & Multiplayer Citadel Roster */}
-          <div className="lg:col-span-1 space-y-6">
+          <div className={`lg:col-span-1 space-y-6 ${isFullscreen ? 'hidden' : ''}`}>
             <div className="sticky top-20 space-y-6">
               <div className="p-5 rounded-xl bg-[#faf9f5] border border-[#e6dfd8]">
                 <WorldStatePanel worldState={worldState} memoryState={memoryState} />
@@ -868,36 +1007,6 @@ function GamePlay() {
               {/* Connected Multiplayer Participants Roster */}
               {isMultiplayer && room && (
                 <div className="space-y-4">
-                  
-                  {/* Game Overseer (Commander Vale / Host) */}
-                  {room.players.find(p => p.isHost) && (
-                    <div className="p-4 rounded-xl bg-[#141413] border border-[#252320]">
-                      <div className="text-[10px] font-mono text-[#cc785c] uppercase tracking-wider mb-2">
-                        Game Overseer
-                      </div>
-                      {(() => {
-                        const host = room.players.find(p => p.isHost)!;
-                        return (
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span
-                                className="w-2 h-2 rounded-full shadow-[0_0_8px_rgba(204,120,92,0.6)]"
-                                style={{ backgroundColor: host.connected ? '#cc785c' : '#8e8b82' }}
-                              />
-                              <span className="font-medium text-[#faf9f5]">
-                                {host.name}
-                                {host.id === session?.playerId && ' (You)'}
-                              </span>
-                            </div>
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#252320] text-[#cc785c] border border-[#cc785c]/30">
-                              COMMANDER VALE
-                            </span>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  )}
-
                   {/* Citadel Operatives */}
                   <div className="p-5 rounded-xl bg-[#faf9f5] border border-[#e6dfd8] space-y-3">
                     <div className="flex items-center justify-between">

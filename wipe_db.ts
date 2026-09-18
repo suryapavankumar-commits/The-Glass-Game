@@ -1,4 +1,4 @@
-import { db } from './services/firebaseService';
+import { db } from './lib/firebase';
 import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
 
 async function wipeDatabase() {

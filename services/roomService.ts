@@ -265,6 +265,11 @@ export const roomService = {
   // ── 3. GET ROOM (WITH FIRESTORE FALLBACK RECOVERY) ───────────────────────────
   async getRoomAsync(code: string): Promise<Room | null> {
     const normalizedCode = code.trim().toUpperCase();
+
+    if (globalThis.__deletedRooms && globalThis.__deletedRooms.has(normalizedCode)) {
+      return null;
+    }
+
     const inMem = roomStore.get(normalizedCode);
     if (inMem) return inMem;
 
@@ -598,7 +603,7 @@ export const roomService = {
   },
 
   // ── 9. DELETE ROOM (CREATOR / HOST ONLY) ───────────────────────────────────
-  deleteRoom(code: string, requesterId: string): { success: boolean; code: string } {
+  async deleteRoom(code: string, requesterId: string): Promise<{ success: boolean; code: string }> {
     const normalizedCode = code.trim().toUpperCase();
     const room = roomStore.get(normalizedCode);
 
@@ -617,8 +622,12 @@ export const roomService = {
     // Delete from memory store
     roomStore.delete(normalizedCode);
 
+    // Add to deleted set so we don't accidentally re-hydrate it
+    if (!globalThis.__deletedRooms) globalThis.__deletedRooms = new Set();
+    globalThis.__deletedRooms.add(normalizedCode);
+
     // Delete from Firebase Firestore
-    firebaseService.deleteRoom(code).catch(console.warn);
+    await firebaseService.deleteRoom(code).catch(console.warn);
 
     return { success: true, code: normalizedCode };
   },
