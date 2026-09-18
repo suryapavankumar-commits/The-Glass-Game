@@ -139,9 +139,13 @@ export const roomService = {
   },
 
   // ── 2. JOIN ROOM (STRICT SERVER-SIDE MAX 10 ENFORCEMENT) ────────────────────
-  joinRoom(code: string, playerName: string): { room: Room; player: RoomPlayer } {
+  async joinRoomAsync(code: string, playerName: string): Promise<{ room: Room; player: RoomPlayer }> {
     const normalizedCode = code.trim().toUpperCase();
-    const room = roomStore.get(normalizedCode);
+    let room = roomStore.get(normalizedCode);
+
+    if (!room) {
+      room = (await this.getRoomAsync(normalizedCode)) || undefined;
+    }
 
     if (!room) {
       const err = new Error('ROOM_NOT_FOUND');
@@ -198,7 +202,93 @@ export const roomService = {
     return { room, player };
   },
 
-  // ── 3. GET ROOM ───────────────────────────────────────────────────────────
+  joinRoom(code: string, playerName: string): { room: Room; player: RoomPlayer } {
+    const normalizedCode = code.trim().toUpperCase();
+    const room = roomStore.get(normalizedCode);
+
+    if (!room) {
+      const err = new Error('ROOM_NOT_FOUND');
+      (err as any).status = 404;
+      throw err;
+    }
+
+    if (room.players.length >= room.maxPlayers) {
+      const err = new Error('ROOM_FULL');
+      (err as any).status = 400;
+      throw err;
+    }
+
+    if (room.status !== 'lobby') {
+      const err = new Error('GAME_ALREADY_STARTED');
+      (err as any).status = 400;
+      throw err;
+    }
+
+    const playerId = `player-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const roleIndex = Math.min(room.players.length, ROLE_SEQUENCE.length - 1);
+    const roleInfo = ROLE_SEQUENCE[roleIndex];
+
+    const player: RoomPlayer = {
+      id: playerId,
+      name: playerName.trim() || `Player ${room.players.length + 1}`,
+      role: roleInfo.role,
+      roleLabel: roleInfo.roleLabel,
+      isHost: false,
+      connected: true,
+      joinedAt: new Date().toISOString(),
+    };
+
+    room.players.push(player);
+
+    firebaseService.recordPlayerJoined(room.code, player, room.players.length).catch((err) => {
+      console.warn('[Firebase] Non-blocking player join sync error:', err);
+    });
+
+    room.traces.push({
+      id: `step-join-${Date.now()}`,
+      type: 'user_input',
+      turn: room.gameState.currentTurn,
+      timestamp: new Date().toISOString(),
+      status: 'success',
+      title: `${player.name} connected to Citadel`,
+      description: `Inhabits entity: ${player.roleLabel}. Connected: ${room.players.length}/10.`,
+      durationMs: 32,
+    });
+
+    return { room, player };
+  },
+
+  // ── 3. GET ROOM (WITH FIRESTORE FALLBACK RECOVERY) ───────────────────────────
+  async getRoomAsync(code: string): Promise<Room | null> {
+    const normalizedCode = code.trim().toUpperCase();
+    const inMem = roomStore.get(normalizedCode);
+    if (inMem) return inMem;
+
+    // Fallback recovery from Firestore if memory was cleared or recompiled
+    try {
+      const firestoreRoom = await firebaseService.fetchRoom(normalizedCode);
+      if (firestoreRoom) {
+        const restored: Room = {
+          id: firestoreRoom.id || `room-${Date.now()}`,
+          code: normalizedCode,
+          hostId: firestoreRoom.hostId,
+          status: firestoreRoom.status || 'lobby',
+          players: firestoreRoom.players || [],
+          maxPlayers: firestoreRoom.maxPlayers || 10,
+          createdAt: firestoreRoom.createdAt || new Date().toISOString(),
+          gameState: firestoreRoom.gameState || createInitialServerGameState(`run-${normalizedCode}-${Date.now()}`),
+          traces: firestoreRoom.traces || [],
+        };
+        roomStore.set(normalizedCode, restored);
+        return restored;
+      }
+    } catch (err) {
+      console.warn('[RoomService] Error restoring room from Firestore:', err);
+    }
+
+    return null;
+  },
+
   getRoom(code: string): Room | null {
     const normalizedCode = code.trim().toUpperCase();
     return roomStore.get(normalizedCode) || null;
@@ -405,5 +495,127 @@ export const roomService = {
     });
 
     return room;
+  },
+
+  // ── 7. REMOVE SPECIFIC PLAYER (CREATOR / HOST ONLY) ────────────────────────
+  removePlayer(code: string, requesterId: string, targetPlayerId: string): Room {
+    const normalizedCode = code.trim().toUpperCase();
+    const room = roomStore.get(normalizedCode);
+
+    if (!room) {
+      const err = new Error('ROOM_NOT_FOUND');
+      (err as any).status = 404;
+      throw err;
+    }
+
+    if (room.hostId !== requesterId) {
+      const err = new Error('NOT_HOST');
+      (err as any).status = 403;
+      throw err;
+    }
+
+    if (targetPlayerId === room.hostId) {
+      const err = new Error('CANNOT_REMOVE_HOST');
+      (err as any).status = 400;
+      throw err;
+    }
+
+    const targetPlayer = room.players.find((p) => p.id === targetPlayerId);
+    if (!targetPlayer) {
+      const err = new Error('PLAYER_NOT_FOUND');
+      (err as any).status = 404;
+      throw err;
+    }
+
+    // Remove player from authoritative list
+    room.players = room.players.filter((p) => p.id !== targetPlayerId);
+
+    // Sync removal to Firebase Firestore
+    firebaseService.removePlayer(code, targetPlayerId, room.players).catch(console.warn);
+
+    // Record removal trace
+    room.traces.push({
+      id: `step-kick-${Date.now()}`,
+      type: 'user_input',
+      turn: room.gameState.currentTurn,
+      timestamp: new Date().toISOString(),
+      status: 'warning',
+      title: `Operative Dismissed: ${targetPlayer.name}`,
+      description: `${targetPlayer.name} (${targetPlayer.roleLabel}) was removed by the Commander. Connected: ${room.players.length}/10.`,
+      durationMs: 20,
+    });
+
+    return room;
+  },
+
+  // ── 8. REMOVE ALL NON-HOST PLAYERS (CREATOR / HOST ONLY) ───────────────────
+  removeAllPlayers(code: string, requesterId: string): Room {
+    const normalizedCode = code.trim().toUpperCase();
+    const room = roomStore.get(normalizedCode);
+
+    if (!room) {
+      const err = new Error('ROOM_NOT_FOUND');
+      (err as any).status = 404;
+      throw err;
+    }
+
+    if (room.hostId !== requesterId) {
+      const err = new Error('NOT_HOST');
+      (err as any).status = 403;
+      throw err;
+    }
+
+    const hostPlayer = room.players.find((p) => p.id === requesterId);
+    if (!hostPlayer) {
+      const err = new Error('HOST_NOT_FOUND');
+      (err as any).status = 500;
+      throw err;
+    }
+
+    // Reset room players to host only
+    room.players = [hostPlayer];
+
+    // Sync removal to Firebase Firestore
+    firebaseService.removeAllNonHostPlayers(code, hostPlayer).catch(console.warn);
+
+    // Record trace
+    room.traces.push({
+      id: `step-kick-all-${Date.now()}`,
+      type: 'user_input',
+      turn: room.gameState.currentTurn,
+      timestamp: new Date().toISOString(),
+      status: 'warning',
+      title: 'All Operatives Dismissed',
+      description: 'The Commander dismissed all visiting operatives from the Citadel. Room reset to 1/10.',
+      durationMs: 25,
+    });
+
+    return room;
+  },
+
+  // ── 9. DELETE ROOM (CREATOR / HOST ONLY) ───────────────────────────────────
+  deleteRoom(code: string, requesterId: string): { success: boolean; code: string } {
+    const normalizedCode = code.trim().toUpperCase();
+    const room = roomStore.get(normalizedCode);
+
+    if (!room) {
+      const err = new Error('ROOM_NOT_FOUND');
+      (err as any).status = 404;
+      throw err;
+    }
+
+    if (room.hostId !== requesterId) {
+      const err = new Error('NOT_HOST');
+      (err as any).status = 403;
+      throw err;
+    }
+
+    // Delete from memory store
+    roomStore.delete(normalizedCode);
+
+    // Delete from Firebase Firestore
+    firebaseService.deleteRoom(code).catch(console.warn);
+
+    return { success: true, code: normalizedCode };
   },
 };

@@ -17,7 +17,7 @@ export async function POST(
       );
     }
 
-    const { room, player } = roomService.joinRoom(code, playerName);
+    const { room, player } = await roomService.joinRoomAsync(code, playerName);
 
     return NextResponse.json({
       success: true,

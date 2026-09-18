@@ -16,7 +16,8 @@ import { roomClient, PlayerSession } from '@/services/roomClient';
 import type { TurnChoice, Invariant, Room, RoomPlayer } from '@/types';
 import {
   Eye, Users, Shield, Activity, Copy, Check,
-  AlertTriangle, RotateCcw, Play, CheckCircle
+  AlertTriangle, RotateCcw, Play, CheckCircle,
+  UserMinus, UserX, Trash2, Loader2
 } from 'lucide-react';
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -246,9 +247,9 @@ function GamePlay() {
 
   const { state: soloState, advanceTurn, createInvariant, triggerCompression, detectFailure, switchMode } = useGame();
 
-  // Multiplayer room state
-  const [room, setRoom] = useState<Room | null>(null);
-  const [session, setSession] = useState<PlayerSession | null>(null);
+  // Multiplayer room state (hydrated immediately from cache for 0ms initial player delay)
+  const [room, setRoom] = useState<Room | null>(() => (roomCode ? roomClient.getCachedRoom(roomCode) : null));
+  const [session, setSession] = useState<PlayerSession | null>(() => (roomCode ? roomClient.getSession(roomCode) : null));
   const [codeCopied, setCodeCopied] = useState(false);
 
   // Judge Mode view toggle ('player' vs 'glass-box')
@@ -274,22 +275,91 @@ function GamePlay() {
 
   const currentTurnData = GAME_SCRIPT[currentTurnNumber] || GAME_SCRIPT[0];
 
-  // Load session from localStorage if in room
+  const [adminLoading, setAdminLoading] = useState<string | null>(null);
+
+  // Refresh session from localStorage if in room
   useEffect(() => {
     if (roomCode) {
       const saved = roomClient.getSession(roomCode);
-      setSession(saved);
+      if (saved) setSession(saved);
     }
   }, [roomCode]);
+
+  const isHost = session?.isHost || (room && session && room.hostId === session.playerId);
+
+  // Creator / Host Admin actions
+  const handleRemovePlayer = async (targetPlayer: RoomPlayer) => {
+    if (!roomCode || !session?.playerId || adminLoading) return;
+    if (!window.confirm(`Remove operative "${targetPlayer.name}" from the Citadel session?`)) return;
+
+    setAdminLoading(targetPlayer.id);
+    try {
+      const updated = await roomClient.removePlayer(roomCode, session.playerId, targetPlayer.id);
+      setRoom(updated);
+    } catch (err: any) {
+      alert(err.message || 'Failed to remove player');
+    } finally {
+      setAdminLoading(null);
+    }
+  };
+
+  const handleRemoveAll = async () => {
+    if (!roomCode || !session?.playerId || adminLoading) return;
+    if (!window.confirm('Remove ALL visiting operatives from the Citadel? Only you (the Commander) will remain.')) return;
+
+    setAdminLoading('removeAll');
+    try {
+      const updated = await roomClient.removeAllPlayers(roomCode, session.playerId);
+      setRoom(updated);
+    } catch (err: any) {
+      alert(err.message || 'Failed to remove operatives');
+    } finally {
+      setAdminLoading(null);
+    }
+  };
+
+  const handleDeleteRoom = async () => {
+    if (!roomCode || !session?.playerId || adminLoading) return;
+    if (!window.confirm('DANGER: Permanently delete this Citadel room? All operatives will be disconnected.')) return;
+
+    setAdminLoading('delete');
+    try {
+      await roomClient.deleteRoom(roomCode, session.playerId);
+      roomClient.clearSession(roomCode);
+      router.push('/');
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete room');
+      setAdminLoading(null);
+    }
+  };
 
   // Subscribe to authoritative room updates
   useEffect(() => {
     if (!roomCode) return;
 
+    let confirmedInRoom = Boolean(roomClient.getCachedRoom(roomCode)?.players.some((p) => p.id === roomClient.getSession(roomCode)?.playerId));
+    let failCount = 0;
+
     const unsubscribe = roomClient.subscribeToRoom(
       roomCode,
       (updatedRoom) => {
+        failCount = 0;
         setRoom(updatedRoom);
+
+        // Check if non-host player was kicked from room (only after confirmed presence)
+        const currentSession = roomClient.getSession(roomCode);
+        if (currentSession && !currentSession.isHost) {
+          const stillInRoom = updatedRoom.players.some((p) => p.id === currentSession.playerId);
+          if (stillInRoom) {
+            confirmedInRoom = true;
+          } else if (confirmedInRoom) {
+            roomClient.clearSession(roomCode);
+            alert('You have been removed from this Citadel session by the Commander.');
+            router.push('/');
+            return;
+          }
+        }
+
         if (updatedRoom.status === 'playing') {
           setGameStarted(true);
         }
@@ -300,13 +370,23 @@ function GamePlay() {
         }
       },
       (err) => {
+        failCount++;
+        const currentSession = roomClient.getSession(roomCode);
+        if (failCount >= 2 && err.message && (err.message.includes('not found') || err.message.includes('ROOM_NOT_FOUND'))) {
+          if (currentSession && !currentSession.isHost) {
+            roomClient.clearSession(roomCode);
+            alert('This Citadel room has been closed by the Commander.');
+            router.push('/');
+            return;
+          }
+        }
         console.warn('Room subscription poll error:', err);
       },
-      1200
+      800
     );
 
     return () => unsubscribe();
-  }, [roomCode, failureDetected]);
+  }, [roomCode, failureDetected, router]);
 
   // Typewriter effect for narrative
   const typeText = useCallback((text: string) => {
@@ -764,31 +844,91 @@ function GamePlay() {
                   </div>
 
                   <div className="space-y-2">
-                    {room.players.map((p) => (
-                      <div
-                        key={p.id}
-                        className={`flex items-center justify-between p-2 rounded-lg border text-xs ${
-                          p.id === session?.playerId
-                            ? 'bg-[#cc785c]/8 border-[#cc785c]/30'
-                            : 'bg-white border-[#e6dfd8]'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="w-2 h-2 rounded-full"
-                            style={{ backgroundColor: p.connected ? '#5db872' : '#8e8b82' }}
-                          />
-                          <span className="font-medium text-[#141413]">
-                            {p.name}
-                            {p.id === session?.playerId && ' (You)'}
-                          </span>
+                    {room.players.map((p) => {
+                      const canKick = isHost && !p.isHost && p.id !== session?.playerId;
+                      return (
+                        <div
+                          key={p.id}
+                          className={`flex items-center justify-between p-2 rounded-lg border text-xs transition-all ${
+                            p.id === session?.playerId
+                              ? 'bg-[#cc785c]/8 border-[#cc785c]/30'
+                              : 'bg-white border-[#e6dfd8]'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 overflow-hidden flex-1 min-w-0">
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{ backgroundColor: p.connected ? '#5db872' : '#8e8b82' }}
+                            />
+                            <div className="truncate flex-1 min-w-0">
+                              <span className="font-medium text-[#141413]">
+                                {p.name}
+                                {p.id === session?.playerId && ' (You)'}
+                              </span>
+                              {p.isHost && (
+                                <span className="ml-1 text-[9px] font-mono px-1 rounded bg-[#181715] text-[#faf9f5]">
+                                  HOST
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                            <span className="text-[10px] font-mono text-[#6c6a64] uppercase">
+                              {p.roleLabel}
+                            </span>
+                            {canKick && (
+                              <button
+                                onClick={() => handleRemovePlayer(p)}
+                                disabled={adminLoading === p.id}
+                                title={`Remove ${p.name}`}
+                                className="p-1 rounded text-[#8c8880] hover:text-[#c64545] hover:bg-[#c64545]/10 active:scale-95 transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                {adminLoading === p.id ? (
+                                  <Loader2 size={12} className="animate-spin text-[#c64545]" />
+                                ) : (
+                                  <UserMinus size={12} />
+                                )}
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <span className="text-[10px] font-mono text-[#6c6a64] uppercase">
-                          {p.roleLabel}
-                        </span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
+
+                  {/* Host Administrative Controls in Game */}
+                  {isHost && (
+                    <div className="pt-2.5 border-t border-[#e6dfd8] flex items-center justify-between gap-2">
+                      <button
+                        onClick={handleRemoveAll}
+                        disabled={adminLoading !== null || room.players.length <= 1}
+                        title="Remove all other operatives"
+                        className="flex-1 py-1.5 px-2 rounded-lg border border-[#e6dfd8] hover:border-[#cc785c] bg-white hover:bg-[#faf6f0] text-[#6c6a64] hover:text-[#cc785c] text-[10px] font-mono flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {adminLoading === 'removeAll' ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          <UserX size={11} />
+                        )}
+                        <span>REMOVE ALL</span>
+                      </button>
+
+                      <button
+                        onClick={handleDeleteRoom}
+                        disabled={adminLoading !== null}
+                        title="Permanently delete room"
+                        className="py-1.5 px-2 rounded-lg border border-[#c64545]/30 hover:border-[#c64545] bg-white hover:bg-[#c64545]/10 text-[#c64545] text-[10px] font-mono flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-40"
+                      >
+                        {adminLoading === 'delete' ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          <Trash2 size={11} />
+                        )}
+                        <span>DELETE ROOM</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -3,7 +3,7 @@
 // Persists rooms, participants, and join events to Firestore
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { doc, setDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, deleteDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Room, RoomPlayer } from '@/types';
 
@@ -168,6 +168,80 @@ export const firebaseService = {
       } else {
         console.warn(`[Firebase] Warning: Failed to update game status in Firestore:`, error);
       }
+    }
+  },
+
+  /**
+   * Deletes a room document completely from Firestore
+   */
+  async deleteRoom(roomCode: string): Promise<void> {
+    try {
+      const cleanCode = roomCode.trim().toUpperCase();
+      await deleteDoc(doc(db, 'rooms', cleanCode));
+      console.log(`[Firebase] Room ${cleanCode} deleted from Firestore.`);
+    } catch (error) {
+      console.warn(`[Firebase] Warning: Failed to delete room ${roomCode} from Firestore:`, error);
+    }
+  },
+
+  /**
+   * Removes a specific player from a room in Firestore
+   */
+  async removePlayer(roomCode: string, playerId: string, remainingPlayers: RoomPlayer[]): Promise<void> {
+    try {
+      const cleanCode = roomCode.trim().toUpperCase();
+      // Remove subcollection player document
+      await deleteDoc(doc(db, 'rooms', cleanCode, 'players', playerId));
+      // Update parent room document with remaining players
+      await setDoc(
+        doc(db, 'rooms', cleanCode),
+        {
+          playerCount: remainingPlayers.length,
+          players: remainingPlayers,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      console.log(`[Firebase] Player ${playerId} removed from room ${cleanCode} in Firestore.`);
+    } catch (error) {
+      console.warn(`[Firebase] Warning: Failed to remove player from Firestore:`, error);
+    }
+  },
+
+  /**
+   * Removes all non-host players from a room in Firestore
+   */
+  async removeAllNonHostPlayers(roomCode: string, hostPlayer: RoomPlayer): Promise<void> {
+    try {
+      const cleanCode = roomCode.trim().toUpperCase();
+      await setDoc(
+        doc(db, 'rooms', cleanCode),
+        {
+          playerCount: 1,
+          players: [hostPlayer],
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      console.log(`[Firebase] All non-host players removed from room ${cleanCode} in Firestore.`);
+    } catch (error) {
+      console.warn(`[Firebase] Warning: Failed to remove all players from Firestore:`, error);
+    }
+  },
+
+  /**
+   * Retrieves a room document from Firestore for persistent state recovery
+   */
+  async fetchRoom(roomCode: string): Promise<Room | null> {
+    try {
+      const cleanCode = roomCode.trim().toUpperCase();
+      const roomRef = doc(db, 'rooms', cleanCode);
+      const snap = await getDoc(roomRef);
+      if (!snap.exists()) return null;
+      return snap.data() as Room;
+    } catch (error) {
+      console.warn(`[Firebase] Failed to fetch room ${roomCode} from Firestore:`, error);
+      return null;
     }
   },
 };

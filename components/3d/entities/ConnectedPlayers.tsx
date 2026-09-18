@@ -231,3 +231,6 @@ export function ConnectedPlayers({ players, currentPlayerId }: ConnectedPlayersP
     </group>
   );
 }
+
+// Preload the humanoid ReadyPlayerMe model for instantaneous rendering
+useGLTF.preload('/models/readyplayer.me.glb');
