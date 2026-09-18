@@ -241,6 +241,30 @@ function ConstraintViolationFlash() {
   );
 }
 
+function ContextSurgeryFlash() {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: [0, 1, 0.8, 1] }}
+      className="fixed inset-0 z-40 pointer-events-none"
+      style={{ background: 'rgba(212, 160, 23, 0.06)' }}
+    >
+      <div className="absolute top-32 left-1/2 -translate-x-1/2 w-full max-w-lg px-4">
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 rounded-xl bg-[#d4a017] text-white text-center shadow-2xl"
+        >
+          <div className="text-caption-upper mb-1 opacity-80">Context Surgery Active</div>
+          <p className="text-sm font-medium">
+            Hallucination detected. Narrative has been repaired based on canonical facts.
+          </p>
+        </motion.div>
+      </div>
+    </motion.div>
+  );
+}
+
 // ── Main Game Component ───────────────────────────────────────────────────────
 
 function GamePlay() {
@@ -261,6 +285,7 @@ function GamePlay() {
 
   const [showInvariantToast, setShowInvariantToast] = useState(false);
   const [showViolationFlash, setShowViolationFlash] = useState(false);
+  const [showSurgeryFlash, setShowSurgeryFlash] = useState(false);
   const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [gameStarted, setGameStarted] = useState(soloState.currentTurn > 0 || Boolean(roomCode));
@@ -278,6 +303,7 @@ function GamePlay() {
   const contextLoad = room ? room.gameState.contextLoad : soloState.contextLoad;
   const isCompressing = room ? room.gameState.isCompressing : soloState.isCompressing;
   const failureDetected = room ? room.gameState.failureDetected : soloState.failureDetected;
+  const surgeryApplied = room ? room.gameState.surgeryApplied : soloState.surgeryApplied;
 
   const currentTurnData = GAME_SCRIPT[currentTurnNumber] || GAME_SCRIPT[0];
   const actualNarrative = room?.gameState.latestDecision?.narrative || currentTurnData.narrative;
@@ -389,6 +415,12 @@ function GamePlay() {
         if (updatedRoom.gameState.failureDetected && !failureDetected) {
           setShowViolationFlash(true);
           setTimeout(() => setShowViolationFlash(false), 2000);
+        }
+        
+        // Auto-detect surgery
+        if (updatedRoom.gameState.surgeryApplied && !surgeryApplied) {
+          setShowSurgeryFlash(true);
+          setTimeout(() => setShowSurgeryFlash(false), 3000);
         }
       },
       (err) => {
@@ -664,6 +696,10 @@ function GamePlay() {
 
       <AnimatePresence>
         {showViolationFlash && <ConstraintViolationFlash />}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showSurgeryFlash && <ContextSurgeryFlash />}
       </AnimatePresence>
 
       {room && <ContextSurgeryVisualizer phase={room.gameState.phase} />}

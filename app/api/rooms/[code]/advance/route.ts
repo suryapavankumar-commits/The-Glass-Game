@@ -59,6 +59,7 @@ export async function POST(req: Request, context: { params: Promise<{ code: stri
         
         if (!surgery.isValid && surgery.repairedContext) {
           finalContext = surgery.repairedContext;
+          room.gameState.surgeryApplied = true;
           // Note: Here we could save the surgery report to Firebase for the visualizer
         }
       }
