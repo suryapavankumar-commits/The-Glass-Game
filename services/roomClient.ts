@@ -54,6 +54,12 @@ export const roomClient = {
       isHost: true,
     });
 
+    // Client-side Firestore sync
+    try {
+      const { firebaseService } = await import('@/services/firebaseService');
+      firebaseService.recordRoomCreated(data.room, data.hostPlayer).catch(console.warn);
+    } catch {}
+
     return data;
   },
 
@@ -78,6 +84,12 @@ export const roomClient = {
       roomCode: data.room.code,
       isHost: false,
     });
+
+    // Client-side Firestore sync
+    try {
+      const { firebaseService } = await import('@/services/firebaseService');
+      firebaseService.recordPlayerJoined(data.room.code, data.player, data.room.players.length).catch(console.warn);
+    } catch {}
 
     return data;
   },

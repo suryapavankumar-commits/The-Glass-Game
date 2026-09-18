@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { GameProvider } from '@/store/gameStore';
+import { FirebaseInit } from '@/components/shared/FirebaseInit';
 
 export const metadata: Metadata = {
   title: 'The Glass Game — An AI That Watches Itself Fail',
@@ -23,6 +24,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <GameProvider>
+          <FirebaseInit />
           {children}
         </GameProvider>
       </body>

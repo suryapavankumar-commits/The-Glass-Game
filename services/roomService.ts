@@ -5,6 +5,7 @@
 
 import { Room, RoomPlayer, PlayerRole, PlayerActionPayload, GameState, Invariant, TraceStep } from '@/types';
 import { INITIAL_WORLD_STATE, GAME_SCRIPT } from '@/data/gameScript';
+import { firebaseService } from '@/services/firebaseService';
 
 // Singleton in-memory room storage attached to globalThis
 // Ensures room persistence across Next.js API Route invocations in Node runtime
@@ -128,6 +129,12 @@ export const roomService = {
     };
 
     roomStore.set(code, room);
+
+    // Sync room & host to Firebase Firestore database
+    firebaseService.recordRoomCreated(room, hostPlayer).catch((err) => {
+      console.warn('[Firebase] Non-blocking room sync error:', err);
+    });
+
     return { room, hostPlayer };
   },
 
@@ -171,6 +178,11 @@ export const roomService = {
 
     room.players.push(player);
 
+    // Sync new participant to Firebase Firestore database
+    firebaseService.recordPlayerJoined(room.code, player, room.players.length).catch((err) => {
+      console.warn('[Firebase] Non-blocking player join sync error:', err);
+    });
+
     // Record player connection trace
     room.traces.push({
       id: `step-join-${Date.now()}`,
@@ -210,6 +222,11 @@ export const roomService = {
     }
 
     room.status = 'playing';
+
+    // Sync game started status to Firebase Firestore
+    firebaseService.recordGameStarted(room.code).catch((err) => {
+      console.warn('[Firebase] Non-blocking game started sync error:', err);
+    });
 
     // Advance to Turn 1 automatically if at Turn 0
     if (room.gameState.currentTurn === 0) {
