@@ -204,8 +204,7 @@ export function ConnectedPlayers({ players, currentPlayerId }: ConnectedPlayersP
     <group>
       {players.map((player) => {
         // Player 7 is rendered with full humanoid avatar via Player7.tsx
-        // Commander Vale is the host/overseer and should not have a physical presence in the courtyard
-        if (player.role === 'player_7' || player.role === 'commander_vale' || player.isHost) return null;
+        if (player.role === 'player_7') return null;
 
         let config: { pos: [number, number, number]; rot: [number, number, number] };
         if (player.role === 'observer') {
@@ -232,6 +231,3 @@ export function ConnectedPlayers({ players, currentPlayerId }: ConnectedPlayersP
     </group>
   );
 }
-
-// Preload the humanoid ReadyPlayerMe model for instantaneous rendering
-useGLTF.preload('/models/readyplayer.me.glb');

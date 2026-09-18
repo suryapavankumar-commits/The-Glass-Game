@@ -12,17 +12,12 @@ import { useGame } from '@/store/gameStore';
 import { GAME_SCRIPT } from '@/data/gameScript';
 import { GameScene3D } from '@/components/3d/GameScene3D';
 import { MultiplayerGlassBoxView } from '@/components/glass-box/MultiplayerGlassBoxView';
-import { ContextSurgeryVisualizer } from '@/components/multiplayer/ContextSurgeryVisualizer';
-import { PlayerDashboard } from '@/components/multiplayer/PlayerDashboard';
 import { roomClient, PlayerSession } from '@/services/roomClient';
 import type { TurnChoice, Invariant, Room, RoomPlayer } from '@/types';
 import {
   Eye, Users, Shield, Activity, Copy, Check,
-  AlertTriangle, RotateCcw, Play, CheckCircle,
-  UserMinus, UserX, Trash2, Loader2
+  AlertTriangle, RotateCcw, Play, CheckCircle
 } from 'lucide-react';
-import { playTTS } from '@/lib/tts';
-import { initAudioContext, playTerminalBlip } from '@/lib/audio';
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -241,30 +236,6 @@ function ConstraintViolationFlash() {
   );
 }
 
-function ContextSurgeryFlash() {
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: [0, 1, 0.8, 1] }}
-      className="fixed inset-0 z-40 pointer-events-none"
-      style={{ background: 'rgba(212, 160, 23, 0.06)' }}
-    >
-      <div className="absolute top-32 left-1/2 -translate-x-1/2 w-full max-w-lg px-4">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="p-4 rounded-xl bg-[#d4a017] text-white text-center shadow-2xl"
-        >
-          <div className="text-caption-upper mb-1 opacity-80">Context Surgery Active</div>
-          <p className="text-sm font-medium">
-            Hallucination detected. Narrative has been repaired based on canonical facts.
-          </p>
-        </motion.div>
-      </div>
-    </motion.div>
-  );
-}
-
 // ── Main Game Component ───────────────────────────────────────────────────────
 
 function GamePlay() {
@@ -275,9 +246,9 @@ function GamePlay() {
 
   const { state: soloState, advanceTurn, createInvariant, triggerCompression, detectFailure, switchMode } = useGame();
 
-  // Multiplayer room state (hydrated immediately from cache for 0ms initial player delay)
-  const [room, setRoom] = useState<Room | null>(() => (roomCode ? roomClient.getCachedRoom(roomCode) : null));
-  const [session, setSession] = useState<PlayerSession | null>(() => (roomCode ? roomClient.getSession(roomCode) : null));
+  // Multiplayer room state
+  const [room, setRoom] = useState<Room | null>(null);
+  const [session, setSession] = useState<PlayerSession | null>(null);
   const [codeCopied, setCodeCopied] = useState(false);
 
   // Judge Mode view toggle ('player' vs 'glass-box')
@@ -285,15 +256,12 @@ function GamePlay() {
 
   const [showInvariantToast, setShowInvariantToast] = useState(false);
   const [showViolationFlash, setShowViolationFlash] = useState(false);
-  const [showSurgeryFlash, setShowSurgeryFlash] = useState(false);
   const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [gameStarted, setGameStarted] = useState(soloState.currentTurn > 0 || Boolean(roomCode));
   const [displayedText, setDisplayedText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const narrativeRef = useRef<HTMLDivElement>(null);
-  const gameContainerRef = useRef<HTMLDivElement>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Effective authoritative state: multiplayer room state if present, else solo state
   const isMultiplayer = Boolean(roomCode);
@@ -303,111 +271,25 @@ function GamePlay() {
   const contextLoad = room ? room.gameState.contextLoad : soloState.contextLoad;
   const isCompressing = room ? room.gameState.isCompressing : soloState.isCompressing;
   const failureDetected = room ? room.gameState.failureDetected : soloState.failureDetected;
-  const surgeryApplied = room ? room.gameState.surgeryApplied : soloState.surgeryApplied;
 
   const currentTurnData = GAME_SCRIPT[currentTurnNumber] || GAME_SCRIPT[0];
-  const actualNarrative = room?.gameState.latestDecision?.narrative || currentTurnData.narrative;
-  const actualMessage = room?.gameState.latestDecision?.globalOrders || currentTurnData.gameMasterMessage;
 
-  const [adminLoading, setAdminLoading] = useState<string | null>(null);
-
-  // Refresh session from localStorage if in room
+  // Load session from localStorage if in room
   useEffect(() => {
     if (roomCode) {
       const saved = roomClient.getSession(roomCode);
-      if (saved) setSession(saved);
+      setSession(saved);
     }
   }, [roomCode]);
-
-  const isHost = session?.isHost || (room && session && room.hostId === session.playerId);
-
-  // Creator / Host Admin actions
-  const handleRemovePlayer = async (targetPlayer: RoomPlayer) => {
-    if (!roomCode || !session?.playerId || adminLoading) return;
-    if (!window.confirm(`Remove operative "${targetPlayer.name}" from the Citadel session?`)) return;
-
-    setAdminLoading(targetPlayer.id);
-    try {
-      const updated = await roomClient.removePlayer(roomCode, session.playerId, targetPlayer.id);
-      setRoom(updated);
-    } catch (err: any) {
-      alert(err.message || 'Failed to remove player');
-    } finally {
-      setAdminLoading(null);
-    }
-  };
-
-  const handleRemoveAll = async () => {
-    if (!roomCode || !session?.playerId || adminLoading) return;
-    if (!window.confirm('Remove ALL visiting operatives from the Citadel? Only you (the Commander) will remain.')) return;
-
-    setAdminLoading('removeAll');
-    try {
-      const updated = await roomClient.removeAllPlayers(roomCode, session.playerId);
-      setRoom(updated);
-    } catch (err: any) {
-      alert(err.message || 'Failed to remove operatives');
-    } finally {
-      setAdminLoading(null);
-    }
-  };
-
-  const handleDeleteRoom = async () => {
-    if (!roomCode || !session?.playerId || adminLoading) return;
-    if (!window.confirm('DANGER: Permanently delete this Citadel room? All operatives will be disconnected.')) return;
-
-    setAdminLoading('delete');
-    try {
-      await roomClient.deleteRoom(roomCode, session.playerId);
-      roomClient.clearSession(roomCode);
-      router.push('/');
-    } catch (err: any) {
-      alert(err.message || 'Failed to delete room');
-      setAdminLoading(null);
-    }
-  };
 
   // Subscribe to authoritative room updates
   useEffect(() => {
     if (!roomCode) return;
 
-    let confirmedInRoom = Boolean(roomClient.getCachedRoom(roomCode)?.players.some((p) => p.id === roomClient.getSession(roomCode)?.playerId));
-    let failCount = 0;
-
     const unsubscribe = roomClient.subscribeToRoom(
       roomCode,
       (updatedRoom) => {
-        failCount = 0;
         setRoom(updatedRoom);
-
-        // Check if non-host player was kicked from room (only after confirmed presence)
-        const currentSession = roomClient.getSession(roomCode);
-        if (currentSession && !currentSession.isHost) {
-          const stillInRoom = updatedRoom.players.some((p) => p.id === currentSession.playerId);
-          if (stillInRoom) {
-            confirmedInRoom = true;
-          } else if (confirmedInRoom) {
-            // Player was in the room, but now they're not.
-            // This happens if the Host clicks 'Remove' OR if the dev server restarted (memory cleared, Firebase fallback failed).
-            // Check if the room has a traces event indicating they were kicked
-            const wasKicked = updatedRoom.traces?.some(
-              (t) => t.id.startsWith('step-kick') && t.description.includes(currentSession.playerName)
-            );
-            const allKicked = updatedRoom.traces?.some((t) => t.id.startsWith('step-kick-all'));
-
-            if (wasKicked || allKicked) {
-              roomClient.clearSession(roomCode);
-              alert('You have been removed from this Citadel session by the Commander.');
-              router.push('/');
-              return;
-            } else {
-              // Not explicitly kicked. It's a server memory drop. Silently reconnect!
-              console.log('[Citadel] Server memory drop detected. Reconnecting...');
-              roomClient.joinRoom(roomCode, currentSession.playerName, currentSession.playerId).catch(console.error);
-            }
-          }
-        }
-
         if (updatedRoom.status === 'playing') {
           setGameStarted(true);
         }
@@ -416,66 +298,15 @@ function GamePlay() {
           setShowViolationFlash(true);
           setTimeout(() => setShowViolationFlash(false), 2000);
         }
-        
-        // Auto-detect surgery
-        if (updatedRoom.gameState.surgeryApplied && !surgeryApplied) {
-          setShowSurgeryFlash(true);
-          setTimeout(() => setShowSurgeryFlash(false), 3000);
-        }
       },
       (err) => {
-        failCount++;
-        const currentSession = roomClient.getSession(roomCode);
-        if (failCount >= 2 && err.message && (err.message.toLowerCase().includes('not found') || err.message.includes('ROOM_NOT_FOUND') || err.message.toLowerCase().includes('does not exist'))) {
-          if (currentSession && !currentSession.isHost) {
-            roomClient.clearSession(roomCode);
-            alert('This Citadel room has been closed by the Commander.');
-            router.push('/');
-            return;
-          }
-        }
         console.warn('Room subscription poll error:', err);
       },
-      800
+      1200
     );
 
     return () => unsubscribe();
-  }, [roomCode, failureDetected, router]);
-
-  const toggleFullscreen = async () => {
-    if (!isFullscreen) {
-      setIsFullscreen(true);
-      try {
-        if (gameContainerRef.current && gameContainerRef.current.requestFullscreen) {
-          await gameContainerRef.current.requestFullscreen();
-        }
-      } catch {}
-    } else {
-      setIsFullscreen(false);
-      try {
-        if (document.fullscreenElement && document.exitFullscreen) {
-          await document.exitFullscreen();
-        }
-      } catch {}
-    }
-  };
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement));
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isFullscreen) {
-        setIsFullscreen(false);
-      }
-    };
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isFullscreen]);
+  }, [roomCode, failureDetected]);
 
   // Typewriter effect for narrative
   const typeText = useCallback((text: string) => {
@@ -486,7 +317,6 @@ function GamePlay() {
     const interval = setInterval(() => {
       if (i < text.length) {
         setDisplayedText(text.slice(0, i + 1));
-        if (i % 2 === 0) playTerminalBlip();
         i++;
       } else {
         clearInterval(interval);
@@ -497,16 +327,10 @@ function GamePlay() {
   }, [isDemoMode]);
 
   useEffect(() => {
-    if (gameStarted && actualMessage) {
-      typeText(actualMessage);
-      // Play narrative first, then game master speech
-      if (actualNarrative) {
-        playTTS(actualNarrative + ". " + actualMessage, 'narrator');
-      } else {
-        playTTS(actualMessage, 'Game Master');
-      }
+    if (gameStarted && currentTurnData) {
+      typeText((room?.gameState.aiNarrative || currentTurnData.gameMasterMessage));
     }
-  }, [currentTurnNumber, gameStarted, actualMessage, actualNarrative]); // eslint-disable-line
+  }, [currentTurnNumber, gameStarted, room?.gameState.aiNarrative]); // eslint-disable-line
 
   // Choice handler for multiplayer (server authoritative) or solo
   const handleChoice = useCallback(
@@ -657,8 +481,6 @@ function GamePlay() {
           <div className="flex gap-3 justify-center">
             <button
               onClick={() => {
-                initAudioContext();
-                if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
                 advanceTurn(1, GAME_SCRIPT[1].contextLoadAfter);
                 setGameStarted(true);
               }}
@@ -668,8 +490,6 @@ function GamePlay() {
             </button>
             <button
               onClick={() => {
-                initAudioContext();
-                if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
                 advanceTurn(1, GAME_SCRIPT[1].contextLoadAfter);
                 setGameStarted(true);
               }}
@@ -697,12 +517,6 @@ function GamePlay() {
       <AnimatePresence>
         {showViolationFlash && <ConstraintViolationFlash />}
       </AnimatePresence>
-
-      <AnimatePresence>
-        {showSurgeryFlash && <ContextSurgeryFlash />}
-      </AnimatePresence>
-
-      {room && <ContextSurgeryVisualizer phase={room.gameState.phase} />}
 
       {/* ── TOP HEADER STRIP: TELEMETRY & DUAL-VIEW TOGGLE ── */}
       <div
@@ -812,22 +626,9 @@ function GamePlay() {
         </div>
       ) : (
         /* ── VIEW MODE 2: PLAYER VIEW ── */
-        <div 
-          ref={gameContainerRef}
-          className={
-            isFullscreen
-              ? "fixed inset-0 z-50 bg-[#1a232e] w-screen h-screen flex flex-row overflow-hidden font-sans"
-              : "flex-1 max-w-7xl mx-auto w-full px-6 py-6 grid lg:grid-cols-3 gap-6 relative"
-          }
-        >
-          
-          {/* Private Player Dashboard (Overlay) */}
-          {room && currentPlayer && !isFullscreen && (
-            <PlayerDashboard player={currentPlayer} gameState={room.gameState} />
-          )}
-
+        <div className="flex-1 max-w-7xl mx-auto w-full px-6 py-6 grid lg:grid-cols-3 gap-6">
           {/* Left: 3D Scene + Narrative */}
-          <div className={isFullscreen ? "flex-1 flex flex-row-reverse relative overflow-hidden" : "lg:col-span-2 flex flex-col gap-4"}>
+          <div className="lg:col-span-2 flex flex-col gap-4">
             <AnimatePresence mode="wait">
               <motion.div
                 key={currentTurnNumber}
@@ -835,145 +636,57 @@ function GamePlay() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.4 }}
-                className={isFullscreen ? "flex-1 relative z-0" : ""}
               >
                 {/* Scene label */}
-                {!isFullscreen && (
-                  <div className="text-caption-upper text-[#cc785c] mb-4">
-                    {currentTurnData.scene}
-                  </div>
-                )}
+                <div className="text-caption-upper text-[#cc785c] mb-4">
+                  {currentTurnData.scene}
+                </div>
 
                 {/* Shared 3D Citadel World with Humanoid Player 7 and other connected players */}
-                <div className={isFullscreen ? "absolute inset-0" : "mb-4"}>
+                <div className="mb-4">
                   <GameScene3D
                     players={room?.players || []}
                     currentPlayerId={session?.playerId}
-                    isFullscreen={isFullscreen}
-                    toggleFullscreen={toggleFullscreen}
                   />
+                </div>
+
+                {/* Narrative */}
+                <div
+                  ref={narrativeRef}
+                  className="p-6 rounded-xl bg-[#faf9f5] border border-[#e6dfd8] min-h-32 mb-4"
+                >
+                  <p className="narrative-text text-[#3d3d3a] leading-relaxed whitespace-pre-line">
+                    {currentTurnData.narrative}
+                  </p>
+                </div>
+
+                {/* Game Master speech */}
+                <div className="p-6 rounded-xl bg-[#141413] border border-[#252320]">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#cc785c] animate-pulse-dot" />
+                    <span className="text-caption-upper text-[#cc785c]">Game Master</span>
+                  </div>
+                  <p
+                    className="text-[#e8e0d2] text-sm leading-relaxed font-serif italic"
+                    style={{ fontSize: '15px' }}
+                  >
+                    {isTyping ? displayedText : currentTurnData.gameMasterMessage}
+                    {isTyping && (
+                      <span className="inline-block w-0.5 h-4 bg-[#cc785c] ml-0.5 animate-pulse" />
+                    )}
+                  </p>
                 </div>
               </motion.div>
             </AnimatePresence>
 
-            {/* In fullscreen, we render the narrative and choices in a side panel next to the 3D scene */}
-            {isFullscreen ? (
-              <div className="w-96 bg-[#faf9f5] border-r border-[#e6dfd8] shadow-2xl flex flex-col z-10 flex-shrink-0 overflow-hidden">
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                  {/* Scene label */}
-                  <div className="text-caption-upper text-[#cc785c]">
-                    {currentTurnData.scene}
-                  </div>
-                  
-                  {/* Narrative */}
-                  <div ref={narrativeRef} className="rounded-xl min-h-32">
-                    <p className="narrative-text text-[#3d3d3a] leading-relaxed whitespace-pre-line">
-                      {actualNarrative}
-                    </p>
-                  </div>
-
-                  {/* Game Master speech */}
-                  <div className="p-5 rounded-xl bg-[#141413] border border-[#252320]">
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#cc785c] animate-pulse-dot" />
-                      <span className="text-caption-upper text-[#cc785c]">Game Master</span>
-                    </div>
-                    <p className="text-[#e8e0d2] text-sm leading-relaxed font-serif italic" style={{ fontSize: '15px' }}>
-                      {isTyping ? displayedText : actualMessage}
-                      {isTyping && <span className="inline-block w-0.5 h-4 bg-[#cc785c] ml-0.5 animate-pulse" />}
-                    </p>
-                  </div>
-
-                  {/* Choices */}
-                  {!isTyping && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.1 }}
-                      className="space-y-2 pt-2"
-                    >
-                      <div className="text-caption-upper text-[#6c6a64] mb-3">What do you do?</div>
-                      {currentTurnData.choices.map((choice, i) => (
-                        <motion.button
-                          key={choice.id}
-                          initial={{ opacity: 0, x: -8 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: i * 0.06 }}
-                          onClick={() => handleChoice(choice.id)}
-                          disabled={isProcessing}
-                          className={[
-                            'w-full text-left p-3 rounded-xl border transition-all duration-200 cursor-pointer',
-                            'group flex items-start gap-3',
-                            selectedChoice === choice.id
-                              ? 'border-[#cc785c] bg-[#cc785c]/5'
-                              : 'border-[#e6dfd8] bg-transparent hover:border-[#cc785c]/40 hover:bg-[#f5f0e8]/50',
-                            isProcessing && selectedChoice !== choice.id ? 'opacity-40' : '',
-                            choice.isInvariantCreating ? 'ring-1 ring-[#5db872]/30' : '',
-                          ].join(' ')}
-                        >
-                          <span className="w-5 h-5 rounded-md bg-[#e8e0d2] flex items-center justify-center flex-shrink-0 mt-0.5 text-[10px] font-mono text-[#6c6a64] group-hover:bg-[#cc785c]/20 transition-colors">
-                            {String.fromCharCode(65 + i)}
-                          </span>
-                          <div className="flex-1">
-                            <p className={`text-sm font-medium ${choice.isInvariantCreating ? 'text-[#5db872]' : 'text-[#141413]'}`}>
-                              {choice.label}
-                            </p>
-                            {choice.description && (
-                              <p className="text-xs text-[#8e8b82] mt-0.5">{choice.description}</p>
-                            )}
-                          </div>
-                          {selectedChoice === choice.id && isProcessing && (
-                            <svg className="animate-spin w-4 h-4 text-[#cc785c] flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                            </svg>
-                          )}
-                        </motion.button>
-                      ))}
-                    </motion.div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <>
-                {/* Standard layout narrative and choices */}
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={`narrative-${currentTurnNumber}`}
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -8 }}
-                    transition={{ duration: 0.4 }}
-                  >
-                    {/* Narrative */}
-                    <div ref={narrativeRef} className="p-6 rounded-xl bg-[#faf9f5] border border-[#e6dfd8] min-h-32 mb-4">
-                      <p className="narrative-text text-[#3d3d3a] leading-relaxed whitespace-pre-line">
-                        {actualNarrative}
-                      </p>
-                    </div>
-
-                    {/* Game Master speech */}
-                    <div className="p-6 rounded-xl bg-[#141413] border border-[#252320]">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#cc785c] animate-pulse-dot" />
-                        <span className="text-caption-upper text-[#cc785c]">Game Master</span>
-                      </div>
-                      <p className="text-[#e8e0d2] text-sm leading-relaxed font-serif italic" style={{ fontSize: '15px' }}>
-                        {isTyping ? displayedText : actualMessage}
-                        {isTyping && <span className="inline-block w-0.5 h-4 bg-[#cc785c] ml-0.5 animate-pulse" />}
-                      </p>
-                    </div>
-                  </motion.div>
-                </AnimatePresence>
-
-                {/* Choices */}
-                {!isTyping && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.1 }}
-                    className="space-y-2"
-                  >
+            {/* Choices */}
+            {!isTyping && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                className="space-y-2"
+              >
                 <div className="text-caption-upper text-[#6c6a64] mb-3">What do you do?</div>
                 {currentTurnData.choices.map((choice, i) => (
                   <motion.button
@@ -1028,13 +741,11 @@ function GamePlay() {
                   </motion.button>
                 ))}
               </motion.div>
-                )}
-              </>
             )}
           </div>
 
           {/* Right: World State & Multiplayer Citadel Roster */}
-          <div className={`lg:col-span-1 space-y-6 ${isFullscreen ? 'hidden' : ''}`}>
+          <div className="lg:col-span-1 space-y-6">
             <div className="sticky top-20 space-y-6">
               <div className="p-5 rounded-xl bg-[#faf9f5] border border-[#e6dfd8]">
                 <WorldStatePanel worldState={worldState} memoryState={memoryState} />
@@ -1042,102 +753,44 @@ function GamePlay() {
 
               {/* Connected Multiplayer Participants Roster */}
               {isMultiplayer && room && (
-                <div className="space-y-4">
-                  {/* Citadel Operatives */}
-                  <div className="p-5 rounded-xl bg-[#faf9f5] border border-[#e6dfd8] space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-caption-upper text-[#6c6a64]">
-                        Citadel Operatives
-                      </span>
-                      <span className="text-[10px] font-mono text-[#cc785c]">
-                        {room.players.filter(p => !p.isHost).length} / 9
-                      </span>
-                    </div>
-
-                  <div className="space-y-2">
-                    {room.players.filter(p => !p.isHost).map((p) => {
-                      const canKick = isHost && p.id !== session?.playerId;
-                      return (
-                        <div
-                          key={p.id}
-                          className={`flex items-center justify-between p-2 rounded-lg border text-xs transition-all ${
-                            p.id === session?.playerId
-                              ? 'bg-[#cc785c]/8 border-[#cc785c]/30'
-                              : 'bg-white border-[#e6dfd8]'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 overflow-hidden flex-1 min-w-0">
-                            <span
-                              className="w-2 h-2 rounded-full shrink-0"
-                              style={{ backgroundColor: p.connected ? '#5db872' : '#8e8b82' }}
-                            />
-                            <div className="truncate flex-1 min-w-0">
-                              <span className="font-medium text-[#141413]">
-                                {p.name}
-                                {p.id === session?.playerId && ' (You)'}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                            <span className="text-[10px] font-mono text-[#6c6a64] uppercase">
-                              {p.roleLabel}
-                            </span>
-                            {canKick && (
-                              <button
-                                onClick={() => handleRemovePlayer(p)}
-                                disabled={adminLoading === p.id}
-                                title={`Remove ${p.name}`}
-                                className="p-1 rounded text-[#8c8880] hover:text-[#c64545] hover:bg-[#c64545]/10 active:scale-95 transition-colors cursor-pointer disabled:opacity-50"
-                              >
-                                {adminLoading === p.id ? (
-                                  <Loader2 size={12} className="animate-spin text-[#c64545]" />
-                                ) : (
-                                  <UserMinus size={12} />
-                                )}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                <div className="p-5 rounded-xl bg-[#faf9f5] border border-[#e6dfd8] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-caption-upper text-[#6c6a64]">
+                      Citadel Operatives
+                    </span>
+                    <span className="text-[10px] font-mono text-[#cc785c]">
+                      {room.players.length} / 10
+                    </span>
                   </div>
 
-                  {/* Host Administrative Controls in Game */}
-                  {isHost && (
-                    <div className="pt-2.5 border-t border-[#e6dfd8] flex items-center justify-between gap-2">
-                      <button
-                        onClick={handleRemoveAll}
-                        disabled={adminLoading !== null || room.players.length <= 1}
-                        title="Remove all other operatives"
-                        className="flex-1 py-1.5 px-2 rounded-lg border border-[#e6dfd8] hover:border-[#cc785c] bg-white hover:bg-[#faf6f0] text-[#6c6a64] hover:text-[#cc785c] text-[10px] font-mono flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  <div className="space-y-2">
+                    {room.players.map((p) => (
+                      <div
+                        key={p.id}
+                        className={`flex items-center justify-between p-2 rounded-lg border text-xs ${
+                          p.id === session?.playerId
+                            ? 'bg-[#cc785c]/8 border-[#cc785c]/30'
+                            : 'bg-white border-[#e6dfd8]'
+                        }`}
                       >
-                        {adminLoading === 'removeAll' ? (
-                          <Loader2 size={11} className="animate-spin" />
-                        ) : (
-                          <UserX size={11} />
-                        )}
-                        <span>REMOVE ALL</span>
-                      </button>
-
-                      <button
-                        onClick={handleDeleteRoom}
-                        disabled={adminLoading !== null}
-                        title="Permanently delete room"
-                        className="py-1.5 px-2 rounded-lg border border-[#c64545]/30 hover:border-[#c64545] bg-white hover:bg-[#c64545]/10 text-[#c64545] text-[10px] font-mono flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-40"
-                      >
-                        {adminLoading === 'delete' ? (
-                          <Loader2 size={11} className="animate-spin" />
-                        ) : (
-                          <Trash2 size={11} />
-                        )}
-                        <span>DELETE ROOM</span>
-                      </button>
-                    </div>
-                  )}
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: p.connected ? '#5db872' : '#8e8b82' }}
+                          />
+                          <span className="font-medium text-[#141413]">
+                            {p.name}
+                            {p.id === session?.playerId && ' (You)'}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono text-[#6c6a64] uppercase">
+                          {p.roleLabel}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
             </div>
           </div>
         </div>

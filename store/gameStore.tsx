@@ -42,7 +42,6 @@ function createInitialGameState(): GameState {
     currentTurn: 0,
     totalTurns: 20,
     mode: 'player',
-    phase: 'player_action',
     worldState: { ...INITIAL_WORLD_STATE },
     memory: { ...INITIAL_MEMORY_STATE },
     contextLoad: 0,

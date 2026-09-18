@@ -10,7 +10,7 @@ export async function POST(
     const body = await req.json().catch(() => ({}));
     const { playerId } = body;
 
-    const room = roomService.applySurgery(code, playerId || 'unknown');
+    const room = await roomService.applySurgery(code, playerId || 'unknown');
 
     return NextResponse.json({
       success: true,

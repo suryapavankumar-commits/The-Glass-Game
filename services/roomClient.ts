@@ -34,42 +34,6 @@ export const roomClient = {
     }
   },
 
-  clearSession(roomCode?: string): void {
-    if (typeof window === 'undefined') return;
-    try {
-      if (roomCode) {
-        localStorage.removeItem(`${SESSION_KEY_PREFIX}${roomCode.toUpperCase()}`);
-        sessionStorage.removeItem(`glass_game_room_${roomCode.toUpperCase()}`);
-      }
-      localStorage.removeItem('glass_game_active_room');
-    } catch {}
-  },
-
-  // ── Instant Room State Caching ────────────────────────────────────────────
-  saveCachedRoom(room: Room): void {
-    if (typeof window === 'undefined' || !room?.code) return;
-    try {
-      sessionStorage.setItem(`glass_game_room_${room.code.toUpperCase()}`, JSON.stringify(room));
-    } catch {}
-  },
-
-  getCachedRoom(roomCode: string): Room | null {
-    if (typeof window === 'undefined' || !roomCode) return null;
-    try {
-      const data = sessionStorage.getItem(`glass_game_room_${roomCode.toUpperCase()}`);
-      return data ? JSON.parse(data) : null;
-    } catch {
-      return null;
-    }
-  },
-
-  clearCachedRoom(roomCode: string): void {
-    if (typeof window === 'undefined' || !roomCode) return;
-    try {
-      sessionStorage.removeItem(`glass_game_room_${roomCode.toUpperCase()}`);
-    } catch {}
-  },
-
   // ── API Operations ────────────────────────────────────────────────────────
   async createRoom(hostName: string): Promise<{ room: Room; hostPlayer: RoomPlayer }> {
     const res = await fetch('/api/rooms', {
@@ -90,8 +54,6 @@ export const roomClient = {
       isHost: true,
     });
 
-    this.saveCachedRoom(data.room);
-
     // Client-side Firestore sync
     try {
       const { firebaseService } = await import('@/services/firebaseService');
@@ -101,12 +63,12 @@ export const roomClient = {
     return data;
   },
 
-  async joinRoom(code: string, playerName: string, existingPlayerId?: string): Promise<{ room: Room; player: RoomPlayer }> {
+  async joinRoom(code: string, playerName: string): Promise<{ room: Room; player: RoomPlayer }> {
     const cleanCode = code.trim().toUpperCase();
     const res = await fetch(`/api/rooms/${cleanCode}/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: playerName, playerId: existingPlayerId }),
+      body: JSON.stringify({ name: playerName }),
     });
 
     const data = await res.json();
@@ -122,8 +84,6 @@ export const roomClient = {
       roomCode: data.room.code,
       isHost: false,
     });
-
-    this.saveCachedRoom(data.room);
 
     // Client-side Firestore sync
     try {
@@ -145,7 +105,6 @@ export const roomClient = {
       throw new Error(data.message || data.error || 'Room not found');
     }
 
-    this.saveCachedRoom(data.room);
     return data.room;
   },
 
@@ -162,24 +121,6 @@ export const roomClient = {
       throw new Error(data.message || data.error || 'Failed to start game');
     }
 
-    this.saveCachedRoom(data.room);
-    return data.room;
-  },
-
-  async advanceGame(code: string, requesterId: string): Promise<Room> {
-    const cleanCode = code.trim().toUpperCase();
-    const res = await fetch(`/api/rooms/${cleanCode}/advance`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requesterId }),
-    });
-
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || 'Failed to advance game');
-    }
-
-    this.saveCachedRoom(data.room);
     return data.room;
   },
 
@@ -196,7 +137,6 @@ export const roomClient = {
       throw new Error(data.message || data.error || 'Failed to submit action');
     }
 
-    this.saveCachedRoom(data.room);
     return data.room;
   },
 
@@ -213,57 +153,7 @@ export const roomClient = {
       throw new Error(data.message || data.error || 'Failed to apply surgery');
     }
 
-    this.saveCachedRoom(data.room);
     return data.room;
-  },
-
-  async removePlayer(code: string, requesterId: string, targetPlayerId: string): Promise<Room> {
-    const cleanCode = code.trim().toUpperCase();
-    const res = await fetch(`/api/rooms/${cleanCode}/kick`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requesterId, targetPlayerId }),
-    });
-
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.message || data.error || 'Failed to remove player');
-    }
-
-    this.saveCachedRoom(data.room);
-    return data.room;
-  },
-
-  async removeAllPlayers(code: string, requesterId: string): Promise<Room> {
-    const cleanCode = code.trim().toUpperCase();
-    const res = await fetch(`/api/rooms/${cleanCode}/kick`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requesterId, removeAll: true }),
-    });
-
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.message || data.error || 'Failed to remove all players');
-    }
-
-    this.saveCachedRoom(data.room);
-    return data.room;
-  },
-
-  async deleteRoom(code: string, requesterId: string): Promise<void> {
-    const cleanCode = code.trim().toUpperCase();
-    this.clearCachedRoom(cleanCode);
-    const res = await fetch(`/api/rooms/${cleanCode}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requesterId }),
-    });
-
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.message || data.error || 'Failed to delete room');
-    }
   },
 
   // ── Polling Subscription Helper ───────────────────────────────────────────
@@ -271,7 +161,7 @@ export const roomClient = {
     code: string,
     onUpdate: (room: Room) => void,
     onError?: (err: Error) => void,
-    intervalMs = 800
+    intervalMs = 1200
   ): () => void {
     let active = true;
 

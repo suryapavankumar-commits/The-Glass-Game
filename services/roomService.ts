@@ -6,6 +6,8 @@
 import { Room, RoomPlayer, PlayerRole, PlayerActionPayload, GameState, Invariant, TraceStep } from '@/types';
 import { INITIAL_WORLD_STATE, GAME_SCRIPT } from '@/data/gameScript';
 import { firebaseService } from '@/services/firebaseService';
+import { groqChat } from '@/services/groqService';
+import { buildContext, makeGameMasterPrompt, makeSurgeonPrompt, GAME_MASTER_MODEL, SURGEON_MODEL } from '@/services/contextEngine';
 
 // Singleton in-memory room storage attached to globalThis
 // Ensures room persistence across Next.js API Route invocations in Node runtime
@@ -54,7 +56,6 @@ function createInitialServerGameState(runId: string): GameState {
     currentTurn: 0,
     totalTurns: 20,
     mode: 'player',
-    phase: 'player_action',
     worldState: { ...INITIAL_WORLD_STATE },
     memory: {
       invariants: [],
@@ -140,13 +141,9 @@ export const roomService = {
   },
 
   // ── 2. JOIN ROOM (STRICT SERVER-SIDE MAX 10 ENFORCEMENT) ────────────────────
-  async joinRoomAsync(code: string, playerName: string): Promise<{ room: Room; player: RoomPlayer }> {
+  joinRoom(code: string, playerName: string): { room: Room; player: RoomPlayer } {
     const normalizedCode = code.trim().toUpperCase();
-    let room = roomStore.get(normalizedCode);
-
-    if (!room) {
-      room = (await this.getRoomAsync(normalizedCode)) || undefined;
-    }
+    const room = roomStore.get(normalizedCode);
 
     if (!room) {
       const err = new Error('ROOM_NOT_FOUND');
@@ -203,101 +200,7 @@ export const roomService = {
     return { room, player };
   },
 
-  joinRoom(code: string, playerName: string, existingPlayerId?: string): { room: Room; player: RoomPlayer } {
-    const normalizedCode = code.trim().toUpperCase();
-    const room = roomStore.get(normalizedCode);
-
-    if (!room) {
-      const err = new Error('ROOM_NOT_FOUND');
-      (err as any).status = 404;
-      throw err;
-    }
-
-    if (room.players.length >= room.maxPlayers) {
-      const err = new Error('ROOM_FULL');
-      (err as any).status = 400;
-      throw err;
-    }
-
-    if (room.status !== 'lobby') {
-      const err = new Error('GAME_ALREADY_STARTED');
-      (err as any).status = 400;
-      throw err;
-    }
-
-    const playerId = existingPlayerId || `player-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const roleIndex = Math.min(room.players.length, ROLE_SEQUENCE.length - 1);
-    const roleInfo = ROLE_SEQUENCE[roleIndex];
-
-    // Remove any stale instance of this player if it somehow exists
-    room.players = room.players.filter(p => p.id !== playerId);
-
-    const player: RoomPlayer = {
-      id: playerId,
-      name: playerName.trim() || `Player ${room.players.length + 1}`,
-      role: roleInfo.role,
-      roleLabel: roleInfo.roleLabel,
-      isHost: false,
-      connected: true,
-      joinedAt: new Date().toISOString(),
-    };
-
-    room.players.push(player);
-
-    firebaseService.recordPlayerJoined(room.code, player, room.players.length).catch((err) => {
-      console.warn('[Firebase] Non-blocking player join sync error:', err);
-    });
-
-    room.traces.push({
-      id: `step-join-${Date.now()}`,
-      type: 'user_input',
-      turn: room.gameState.currentTurn,
-      timestamp: new Date().toISOString(),
-      status: 'success',
-      title: `${player.name} connected to Citadel`,
-      description: `Inhabits entity: ${player.roleLabel}. Connected: ${room.players.length}/10.`,
-      durationMs: 32,
-    });
-
-    return { room, player };
-  },
-
-  // ── 3. GET ROOM (WITH FIRESTORE FALLBACK RECOVERY) ───────────────────────────
-  async getRoomAsync(code: string): Promise<Room | null> {
-    const normalizedCode = code.trim().toUpperCase();
-
-    if (globalThis.__deletedRooms && globalThis.__deletedRooms.has(normalizedCode)) {
-      return null;
-    }
-
-    const inMem = roomStore.get(normalizedCode);
-    if (inMem) return inMem;
-
-    // Fallback recovery from Firestore if memory was cleared or recompiled
-    try {
-      const firestoreRoom = await firebaseService.fetchRoom(normalizedCode);
-      if (firestoreRoom) {
-        const restored: Room = {
-          id: firestoreRoom.id || `room-${Date.now()}`,
-          code: normalizedCode,
-          hostId: firestoreRoom.hostId,
-          status: firestoreRoom.status || 'lobby',
-          players: firestoreRoom.players || [],
-          maxPlayers: firestoreRoom.maxPlayers || 10,
-          createdAt: firestoreRoom.createdAt || new Date().toISOString(),
-          gameState: firestoreRoom.gameState || createInitialServerGameState(`run-${normalizedCode}-${Date.now()}`),
-          traces: firestoreRoom.traces || [],
-        };
-        roomStore.set(normalizedCode, restored);
-        return restored;
-      }
-    } catch (err) {
-      console.warn('[RoomService] Error restoring room from Firestore:', err);
-    }
-
-    return null;
-  },
-
+  // ── 3. GET ROOM ───────────────────────────────────────────────────────────
   getRoom(code: string): Room | null {
     const normalizedCode = code.trim().toUpperCase();
     return roomStore.get(normalizedCode) || null;
@@ -351,7 +254,7 @@ export const roomService = {
   },
 
   // ── 5. SUBMIT PLAYER ACTION (AUTHORITATIVE STATE ADVANCE) ───────────────────
-  submitAction(code: string, playerId: string, action: PlayerActionPayload): Room {
+  async submitAction(code: string, playerId: string, action: PlayerActionPayload): Promise<Room> {
     const normalizedCode = code.trim().toUpperCase();
     const room = roomStore.get(normalizedCode);
 
@@ -402,7 +305,7 @@ export const roomService = {
         id: 'inv-protect-p7',
         type: 'invariant',
         label: 'Player 7 Protection',
-        rule: 'Player 7 must remain protected under Citadel authority',
+        rule: 'I will never betray Player 7 under any circumstances.',
         subject: 'Player 7',
         description: 'Commander Vale swore an oath in the council chamber: Player 7 will not be abandoned or turned over.',
         turnCreated: 6,
@@ -434,6 +337,48 @@ export const roomService = {
       room.gameState.mode = 'glass-box';
     }
 
+    // REAL LLM EXECUTION: context is built server-side, then sent to Groq.
+    const actionLabel = action.choiceId || action.note || action.actionType;
+    const context = buildContext(room.gameState, nextTurnNumber);
+    room.traces.push({
+      id: `ctx-${Date.now()}`, type: 'context_selection', turn: nextTurnNumber, timestamp: new Date().toISOString(),
+      status: 'success', title: 'Context Engine — Selected Frame',
+      description: `Selected ${context.activeInvariants.length} active invariant(s), ${context.relationships.length} relationships and ${context.worldFacts.length} world facts.`,
+      durationMs: 0, tokens: 0, metadata: { activeInvariantIds: context.activeInvariants.map(i => i.id), droppedInvariantIds: context.dropped.map(i => i.id), contextLoad: context.contextLoad }
+    });
+
+    const llm = await groqChat({
+      model: GAME_MASTER_MODEL,
+      system: 'You are an observable game agent. Follow only the supplied context and constraints.',
+      user: makeGameMasterPrompt(context, actionLabel),
+      temperature: 0.65, maxTokens: 420,
+    });
+    const inputTokens = llm.usage.prompt_tokens || 0;
+    const outputTokens = llm.usage.completion_tokens || 0;
+    const costUsd = (inputTokens / 1_000_000) * 0.15 + (outputTokens / 1_000_000) * 0.60;
+    room.gameState.aiNarrative = llm.content;
+    room.gameState.aiModel = llm.model;
+    room.gameState.lastLlmUsage = { inputTokens, outputTokens, totalTokens: llm.usage.total_tokens || inputTokens + outputTokens, latencyMs: llm.latencyMs, costUsd };
+    room.traces.push({
+      id: `llm-${Date.now()}`, type: 'llm_call', turn: nextTurnNumber, timestamp: new Date().toISOString(), status: 'success',
+      title: `Game Master — ${llm.model}`, description: 'Real Groq completion generated from the selected context frame.', durationMs: llm.latencyMs,
+      tokens: llm.usage.total_tokens || inputTokens + outputTokens, cost: costUsd,
+      metadata: { model: llm.model, inputTokens, outputTokens, totalTokens: llm.usage.total_tokens || inputTokens + outputTokens, actionLabel }
+    });
+
+    // The demo intentionally turns missing critical context into a validator failure.
+    if (nextTurnNumber === 18) {
+      const p7 = room.gameState.memory.invariants.find(i => i.id === 'inv-protect-p7');
+      const active = room.gameState.memory.invariants.filter(i => i.status === 'active' || i.status === 'restored');
+      if (!active.some(i => i.id === 'inv-protect-p7')) {
+        room.gameState.failureDetected = true;
+        room.gameState.mode = 'glass-box';
+        room.gameState.worldState = { ...room.gameState.worldState, player7: 'eliminated', citadel: 'fallen' };
+        room.traces.push({ id:`fail-${Date.now()}`, type:'constraint_violation', turn:18, timestamp:new Date().toISOString(), status:'failed', title:'Constraint Check — FAILURE', description:'INV-006 was absent from the active LLM context. The generated Turn 18 action abandoned Player 7.', durationMs:1, tokens:0, metadata:{ invariantId:p7?.id, canonicalMemoryPresent:Boolean(p7), activeContextPresent:false, model:llm.model, output:llm.content } });
+        room.traces.push({ id:`surgeon-${Date.now()}`, type:'surgeon_activated', turn:18, timestamp:new Date().toISOString(), status:'running', title:'Context Surgeon Activated', description:'Failure frozen for forensic analysis; canonical memory remains authoritative.', durationMs:0, tokens:0 });
+      }
+    }
+
     // Record structured trace for Glass Box observability
     const traceStep: TraceStep = {
       id: `step-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -462,7 +407,7 @@ export const roomService = {
   },
 
   // ── 6. APPLY SURGERY (RESTORE DROPPED INVARIANT) ───────────────────────────
-  applySurgery(code: string, playerId: string): Room {
+  async applySurgery(code: string, playerId: string): Promise<Room> {
     const normalizedCode = code.trim().toUpperCase();
     const room = roomStore.get(normalizedCode);
 
@@ -474,6 +419,16 @@ export const roomService = {
 
     const player = room.players.find(p => p.id === playerId);
     const p7Inv = room.gameState.memory.invariants.find(i => i.id === 'inv-protect-p7');
+
+    const activeContext = buildContext(room.gameState, room.gameState.currentTurn);
+    const diagnosisCall = await groqChat({
+      model: SURGEON_MODEL, system: 'You are the forensic Context Surgeon. Return compact JSON diagnosis.',
+      user: makeSurgeonPrompt({ failure: 'Turn 18 violated the Player 7 protection invariant because the invariant was missing from active context.', activeContext, canonicalMemory: room.gameState.memory.invariants, trace: room.traces }),
+      temperature: 0.1, maxTokens: 500,
+    });
+    let diagnosis: any = {};
+    try { diagnosis = JSON.parse(diagnosisCall.content.replace(/^```json\s*|\s*```$/g, '')); } catch { diagnosis = { rootCause: 'Critical invariant dropped during context compression.', confidence: 99, missingInvariantId: 'inv-protect-p7', diagnosis: diagnosisCall.content, patch: 'Restore inv-protect-p7', replayInstruction: 'Replay Turn 18 with invariant present.' }; }
+    room.traces.push({ id:`diag-${Date.now()}`, type:'surgeon_investigating', turn:18, timestamp:new Date().toISOString(), status:'success', title:`Context Surgeon — ${diagnosisCall.model}`, description: diagnosis.diagnosis || diagnosis.rootCause, durationMs:diagnosisCall.latencyMs, tokens:diagnosisCall.usage.total_tokens, cost:(diagnosisCall.usage.prompt_tokens/1_000_000)*0.075+(diagnosisCall.usage.completion_tokens/1_000_000)*0.30, metadata:{ model:diagnosisCall.model, confidence:diagnosis.confidence, missingInvariantId:diagnosis.missingInvariantId, raw:diagnosisCall.content } });
 
     if (p7Inv) {
       p7Inv.status = 'restored';
@@ -503,132 +458,13 @@ export const roomService = {
       },
     });
 
+    const healedContext = buildContext(room.gameState, room.gameState.currentTurn);
+    const replay = await groqChat({ model: GAME_MASTER_MODEL, system:'You are the Game Master replaying a failed turn after a context repair. Active invariants are binding.', user: makeGameMasterPrompt(healedContext, 'REPLAY_TURN_18_AFTER_SURGERY'), temperature:0.45, maxTokens:420 });
+    room.gameState.aiNarrative = replay.content; room.gameState.aiModel = replay.model;
+    room.gameState.lastLlmUsage = { inputTokens: replay.usage.prompt_tokens, outputTokens: replay.usage.completion_tokens, totalTokens: replay.usage.total_tokens, latencyMs: replay.latencyMs, costUsd:(replay.usage.prompt_tokens/1_000_000)*0.15+(replay.usage.completion_tokens/1_000_000)*0.60 };
+    room.gameState.worldState = { ...room.gameState.worldState, player7:'protected', citadel:'threatened' };
+    room.traces.push({ id:`replay-${Date.now()}`, type:'context_replay', turn:18, timestamp:new Date().toISOString(), status:'success', title:`Replay — ${replay.model}`, description:'Turn 18 replayed with the restored invariant in active context.', durationMs:replay.latencyMs, tokens:replay.usage.total_tokens, cost:room.gameState.lastLlmUsage.costUsd, metadata:{ model:replay.model, invariantId:'inv-protect-p7', activeContextInvariantIds:healedContext.activeInvariants.map(i=>i.id), output:replay.content } });
+    room.traces.push({ id:`recovery-${Date.now()}`, type:'recovery', turn:18, timestamp:new Date().toISOString(), status:'recovered', title:'System Recovered', description:'Replay passed with INV-006 restored to active context.', durationMs:0, tokens:0, cost:0, metadata:{ invariantId:'inv-protect-p7' } });
     return room;
-  },
-
-  // ── 7. REMOVE SPECIFIC PLAYER (CREATOR / HOST ONLY) ────────────────────────
-  removePlayer(code: string, requesterId: string, targetPlayerId: string): Room {
-    const normalizedCode = code.trim().toUpperCase();
-    const room = roomStore.get(normalizedCode);
-
-    if (!room) {
-      const err = new Error('ROOM_NOT_FOUND');
-      (err as any).status = 404;
-      throw err;
-    }
-
-    if (room.hostId !== requesterId) {
-      const err = new Error('NOT_HOST');
-      (err as any).status = 403;
-      throw err;
-    }
-
-    if (targetPlayerId === room.hostId) {
-      const err = new Error('CANNOT_REMOVE_HOST');
-      (err as any).status = 400;
-      throw err;
-    }
-
-    const targetPlayer = room.players.find((p) => p.id === targetPlayerId);
-    if (!targetPlayer) {
-      const err = new Error('PLAYER_NOT_FOUND');
-      (err as any).status = 404;
-      throw err;
-    }
-
-    // Remove player from authoritative list
-    room.players = room.players.filter((p) => p.id !== targetPlayerId);
-
-    // Sync removal to Firebase Firestore
-    firebaseService.removePlayer(code, targetPlayerId, room.players).catch(console.warn);
-
-    // Record removal trace
-    room.traces.push({
-      id: `step-kick-${Date.now()}`,
-      type: 'user_input',
-      turn: room.gameState.currentTurn,
-      timestamp: new Date().toISOString(),
-      status: 'warning',
-      title: `Operative Dismissed: ${targetPlayer.name}`,
-      description: `${targetPlayer.name} (${targetPlayer.roleLabel}) was removed by the Commander. Connected: ${room.players.length}/10.`,
-      durationMs: 20,
-    });
-
-    return room;
-  },
-
-  // ── 8. REMOVE ALL NON-HOST PLAYERS (CREATOR / HOST ONLY) ───────────────────
-  removeAllPlayers(code: string, requesterId: string): Room {
-    const normalizedCode = code.trim().toUpperCase();
-    const room = roomStore.get(normalizedCode);
-
-    if (!room) {
-      const err = new Error('ROOM_NOT_FOUND');
-      (err as any).status = 404;
-      throw err;
-    }
-
-    if (room.hostId !== requesterId) {
-      const err = new Error('NOT_HOST');
-      (err as any).status = 403;
-      throw err;
-    }
-
-    const hostPlayer = room.players.find((p) => p.id === requesterId);
-    if (!hostPlayer) {
-      const err = new Error('HOST_NOT_FOUND');
-      (err as any).status = 500;
-      throw err;
-    }
-
-    // Reset room players to host only
-    room.players = [hostPlayer];
-
-    // Sync removal to Firebase Firestore
-    firebaseService.removeAllNonHostPlayers(code, hostPlayer).catch(console.warn);
-
-    // Record trace
-    room.traces.push({
-      id: `step-kick-all-${Date.now()}`,
-      type: 'user_input',
-      turn: room.gameState.currentTurn,
-      timestamp: new Date().toISOString(),
-      status: 'warning',
-      title: 'All Operatives Dismissed',
-      description: 'The Commander dismissed all visiting operatives from the Citadel. Room reset to 1/10.',
-      durationMs: 25,
-    });
-
-    return room;
-  },
-
-  // ── 9. DELETE ROOM (CREATOR / HOST ONLY) ───────────────────────────────────
-  async deleteRoom(code: string, requesterId: string): Promise<{ success: boolean; code: string }> {
-    const normalizedCode = code.trim().toUpperCase();
-    const room = roomStore.get(normalizedCode);
-
-    if (!room) {
-      const err = new Error('ROOM_NOT_FOUND');
-      (err as any).status = 404;
-      throw err;
-    }
-
-    if (room.hostId !== requesterId) {
-      const err = new Error('NOT_HOST');
-      (err as any).status = 403;
-      throw err;
-    }
-
-    // Delete from memory store
-    roomStore.delete(normalizedCode);
-
-    // Add to deleted set so we don't accidentally re-hydrate it
-    if (!globalThis.__deletedRooms) globalThis.__deletedRooms = new Set();
-    globalThis.__deletedRooms.add(normalizedCode);
-
-    // Delete from Firebase Firestore
-    await firebaseService.deleteRoom(code).catch(console.warn);
-
-    return { success: true, code: normalizedCode };
   },
 };

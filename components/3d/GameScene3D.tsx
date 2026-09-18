@@ -2,7 +2,7 @@
 
 import React, { useRef, useEffect, useState, Suspense } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { PresentationControls, useGLTF } from '@react-three/drei';
+import { PresentationControls } from '@react-three/drei';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import * as THREE from 'three';
 import { Player7 } from './entities/Player7';
@@ -10,43 +10,115 @@ import { ConnectedPlayers } from './entities/ConnectedPlayers';
 import { CitadelDiorama } from './environments/CitadelDiorama';
 import { useGame } from '@/store/gameStore';
 import type { RoomPlayer } from '@/types';
-import { GAME_SCRIPT } from '@/data/gameScript';
-import { useChoreography } from '@/hooks/useChoreography';
-import { ChoreographyController } from './ChoreographyController';
 
-// Preload the human avatar so connected participants pop in with zero delay
-useGLTF.preload('/models/readyplayer.me.glb');
+// Cinematic camera controller for the monumental 1500-person Grand Hall
+function CameraController({ turn, isFailed }: { turn: number; isFailed: boolean }) {
+  const { camera } = useThree();
+  const targetPosition = useRef(new THREE.Vector3(0, 6.0, 18));
+  const targetLookAt = useRef(new THREE.Vector3(0, 4.0, -4));
+  const currentLookAt = useRef(new THREE.Vector3(0, 4.0, -4));
 
-// Replaced CameraController with AI-driven ChoreographyController
+  useEffect(() => {
+    if (isFailed) return;
+
+    if (turn === 6) {
+      // Focus on Player 7 as the invariant is created
+      targetPosition.current.set(5.2, 3.2, 10.0);
+      targetLookAt.current.set(3.2, 1.8, 5.0);
+    } else if (turn >= 7 && turn <= 16) {
+      // Grand overview of the 1500-person hall
+      targetPosition.current.set(0, 7.5, 22);
+      targetLookAt.current.set(0, 5.0, -6);
+    } else if (turn === 17) {
+      // Focus on Player 7 as context drops
+      targetPosition.current.set(4.6, 2.8, 9.0);
+      targetLookAt.current.set(3.2, 1.8, 5.0);
+    } else if (turn === 18) {
+      // Failure framing
+      targetPosition.current.set(0, 6.5, 20);
+      targetLookAt.current.set(0, 4.5, -5);
+    } else {
+      // Default view showing the courtyard, fountain, and Player 7
+      targetPosition.current.set(0, 6.5, 20);
+      targetLookAt.current.set(0, 4.5, -5);
+    }
+  }, [turn, isFailed]);
+
+  useFrame(() => {
+    if (isFailed) return;
+    camera.position.lerp(targetPosition.current, 0.04);
+    currentLookAt.current.lerp(targetLookAt.current, 0.04);
+    camera.lookAt(currentLookAt.current);
+  });
+
+  return null;
+}
 
 export function GameScene3D({
   players = [],
   currentPlayerId,
-  isFullscreen,
-  toggleFullscreen
 }: {
   players?: RoomPlayer[];
   currentPlayerId?: string;
-  isFullscreen?: boolean;
-  toggleFullscreen?: () => void;
 }) {
   const { state } = useGame();
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   
   const p7Invariant = state.memory.invariants.find(i => i.id === 'inv-protect-p7');
   const invariantStatus = p7Invariant?.status || 'none';
-  
-  const currentTurnData = GAME_SCRIPT.find(t => t.id === state.currentTurn);
-  const { choreography } = useChoreography(currentTurnData, state);
   
   // Player 7 is always physically present in the game world from Turn 1 onwards
   const p7Visible = true;
   const isFailed = state.failureDetected;
 
+  const toggleFullscreen = async () => {
+    if (!isFullscreen) {
+      setIsFullscreen(true);
+      try {
+        if (containerRef.current && containerRef.current.requestFullscreen) {
+          await containerRef.current.requestFullscreen();
+        }
+      } catch {
+        // Fallback
+      }
+    } else {
+      setIsFullscreen(false);
+      try {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          await document.exitFullscreen();
+        }
+      } catch {
+        // Fallback
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen]);
+
   return (
     <div 
       ref={containerRef}
-      className={`w-full h-full overflow-hidden bg-[#1a232e] relative select-none rounded-xl border border-[#e6dfd8] shadow-2xl`}
+      className={`w-full overflow-hidden bg-[#1a232e] relative select-none transition-all duration-300 ${
+        isFullscreen 
+          ? 'fixed inset-0 z-50 w-screen h-screen rounded-none border-none shadow-none' 
+          : 'h-[640px] md:h-[740px] rounded-xl border border-[#e6dfd8] shadow-2xl'
+      }`}
     >
       {/* 3D Canvas */}
       <Canvas shadows camera={{ position: [0, 6.0, 18], fov: 54 }}>
@@ -100,17 +172,15 @@ export function GameScene3D({
 
             {/* Other Connected Multiplayer Participants (Rendered as Real Humans) */}
             {players.length > 0 && (
-              <Suspense fallback={null}>
-                <ConnectedPlayers 
-                  players={players} 
-                  currentPlayerId={currentPlayerId} 
-                />
-              </Suspense>
+              <ConnectedPlayers 
+                players={players} 
+                currentPlayerId={currentPlayerId} 
+              />
             )}
           </PresentationControls>
         </Suspense>
 
-        <ChoreographyController choreography={choreography} isFailed={isFailed} />
+        <CameraController turn={state.currentTurn} isFailed={isFailed} />
       </Canvas>
 
       {/* ── TOP-LEFT: Cinematic Scene Location Badge ── */}

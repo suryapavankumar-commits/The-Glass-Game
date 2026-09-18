@@ -9,7 +9,6 @@ export async function POST(
     const { code } = await params;
     const body = await req.json().catch(() => ({}));
     const playerName = body.name || body.playerName || '';
-    const existingPlayerId = body.playerId;
 
     if (!playerName.trim()) {
       return NextResponse.json(
@@ -18,7 +17,7 @@ export async function POST(
       );
     }
 
-    const { room, player } = await roomService.joinRoom(code, playerName, existingPlayerId);
+    const { room, player } = roomService.joinRoom(code, playerName);
 
     return NextResponse.json({
       success: true,

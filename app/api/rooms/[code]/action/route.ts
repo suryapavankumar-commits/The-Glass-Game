@@ -17,7 +17,7 @@ export async function POST(
       );
     }
 
-    const room = roomService.submitAction(code, playerId, action || { actionType: 'advance_turn', timestamp: new Date().toISOString() });
+    const room = await roomService.submitAction(code, playerId, action || { actionType: 'advance_turn', timestamp: new Date().toISOString() });
 
     return NextResponse.json({
       success: true,
